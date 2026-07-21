@@ -2,6 +2,8 @@
 
 > A keyboard-only movement roguelite. Five simulated sectors. Don't get touched.
 
+**▶ Play in your browser: <https://12code4.github.io/simul/>**
+
 You pilot an unarmed probe through a hostile simulation: thrust, dash (brief
 invulnerability), and nothing else. Collect data shards to open each sector's exit gate
 while autonomous hazards — drifters, seekers, sweepers, pulsars — run their simple rules

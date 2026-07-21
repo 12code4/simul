@@ -35,6 +35,11 @@ material for devlogs or social posts later.
     defensively so a corrupt save can never brick the game.
 - **Next:** playtest & tune the difficulty curve (esp. sectors 4–5), then audio. Add
   Vitest for `sector.ts`/`physics.ts`/`rng.ts` once numbers stop moving daily.
+- **Later same day:** added a GitHub Pages deploy workflow (`deploy.yml`) — builds and
+  publishes `dist/` on every push to `main`, so the game is playable at
+  <https://12code4.github.io/simul/>. Vite's relative `base` was set up for this from
+  day one. Deploys are decoupled from CI: CI checks every branch, Pages only ships
+  what lands on `main`.
 
 ## 2026-07-21 — Project kickoff & scaffolding
 
