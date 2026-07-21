@@ -42,19 +42,14 @@ src/
     config.ts      # tunable constants
 docs/
   GDD.md           # Game Design Document — the vision (start here for the "what")
-  ROADMAP.md       # phased milestones
-  DECISIONS.md     # log of why key decisions were made
   DEVLOG.md        # running development journal
 ```
 
 ## Documentation
 
 - **[Game Design Document](docs/GDD.md)** — what we're building and why.
-- **[Roadmap](docs/ROADMAP.md)** — where we're headed, in phases.
-- **[Decision log](docs/DECISIONS.md)** — the reasoning behind key choices.
 - **[Dev log](docs/DEVLOG.md)** — what changed, session by session.
 - **[CLAUDE.md](CLAUDE.md)** — conventions and how-to-run notes (for AI assistants and future me).
-- **[Changelog](CHANGELOG.md)** — user-facing changes per release.
 
 ## Contributing / workflow
 

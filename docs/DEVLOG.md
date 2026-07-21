@@ -10,10 +10,17 @@ material for devlogs or social posts later.
 
 ## 2026-07-21 — Project kickoff & scaffolding
 
-- Set up the repo as an organized, solo-optimized game project.
-- Chose Vite + TypeScript with a plain-canvas game loop (see `DECISIONS.md` for why).
+- Set up the repo as a lean, solo-optimized game project.
 - Added a minimal runnable skeleton: a fixed-timestep loop bouncing a placeholder ball —
   proves the update/render pipeline works end to end.
-- Established the documentation system: README, `CLAUDE.md`, GDD template, roadmap,
-  decision log, this dev log, plus a changelog and CI.
+- Kept the doc set intentionally small: this Devlog + the GDD, plus README, `CLAUDE.md`,
+  license, and one CI check (typecheck + build).
+- **Key decisions (the "why", kept here instead of a separate log):**
+  - **Vite + TypeScript, plain canvas, no engine yet.** Lowest commitment while the
+    concept is undefined: instant hot-reload preview, shareable via URL, great AI-assisted
+    workflow, any genre stays open. Can drop in Phaser (2D) / Three.js (3D) later without
+    restructuring. Passed over Godot (editor sits between dev and AI) and pygame (less
+    shareable, no browser preview).
+  - **Skip team ceremony** (issue/PR templates, CONTRIBUTING, roadmap/changelog files) —
+    overhead for a team of one; add retroactively if collaborators appear.
 - **Next:** fill in the GDD — decide what `simul` actually *is* (genre, core loop, MVP).

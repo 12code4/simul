@@ -7,7 +7,7 @@ changes.
 
 `simul` is a browser game built with TypeScript + Vite. It's in early scaffolding; the
 concept is still being defined in `docs/GDD.md`. When in doubt about *what* to build,
-check the GDD and the ROADMAP.
+check the GDD.
 
 ## How to run
 
@@ -41,18 +41,20 @@ There is no test suite yet (nothing worth testing until real game logic exists).
   `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `perf:`. Imperative, present tense.
 - **Branches:** short-lived feature branches off `main` for non-trivial work; small doc
   fixes can go straight to the working branch. Keep `main` in a runnable state.
-- **Releases:** tag milestones (`v0.1.0`, …) and record them in `CHANGELOG.md`.
+- **Releases:** tag milestones (`v0.1.0`, …); add a `CHANGELOG.md` when the first one lands.
 - **Keep docs in sync with code.** When you change how something runs or is structured,
   update this file and the README in the same commit.
 
 ## Documentation habits (do these as you work)
 
-- Made a notable technical/design choice? Add a short entry to `docs/DECISIONS.md`.
-- Finished a chunk of work? Add a dated line to `docs/DEVLOG.md`.
-- Changed user-facing behavior? Note it under `[Unreleased]` in `CHANGELOG.md`.
+Deliberately minimal — two docs, kept current:
+
+- Finished a chunk of work, or made a notable technical/design choice? Add a short dated
+  entry to `docs/DEVLOG.md` (record the "why" of decisions here).
 - Firmed up a mechanic or scope? Update `docs/GDD.md`.
 
 ## Things not set up yet (intentionally)
 
-Issue/PR templates, CONTRIBUTING, a test framework, and any game engine (Phaser/Three.js).
-Add these when the project actually needs them, not preemptively.
+Issue/PR templates, CONTRIBUTING, a changelog, a roadmap file, a test framework, and any
+game engine (Phaser/Three.js). Add these when the project actually needs them, not
+preemptively — e.g. a `CHANGELOG.md` once you cut your first tagged release.
