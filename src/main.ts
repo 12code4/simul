@@ -1,9 +1,10 @@
 import "./style.css";
 import { config } from "./game/config";
-import { createInitialState } from "./game/state";
+import { createInput } from "./game/input";
 import { startLoop, type LoopHandle } from "./game/loop";
+import { createInitialState } from "./game/state";
 
-// Entry point: wire up the canvas and kick off the game loop.
+// Entry point: wire up the canvas + input and kick off the game loop.
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game");
 if (!canvas) {
@@ -18,13 +19,15 @@ if (!ctx) {
   throw new Error("Could not get a 2D rendering context");
 }
 
+const input = createInput(window);
 const state = createInitialState();
-const handle: LoopHandle = startLoop(ctx, state);
+const handle: LoopHandle = startLoop(ctx, state, input);
 
-// Vite hot-module replacement: stop the old loop before a new module instance
-// starts, so we don't stack multiple loops during development.
+// Vite hot-module replacement: tear down the old loop and listeners before a
+// new module instance starts, so we don't stack multiple loops in dev.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     handle.stop();
+    input.dispose();
   });
 }

@@ -8,6 +8,34 @@ material for devlogs or social posts later.
 
 ---
 
+## 2026-07-21 — First playable: the full roguelite loop
+
+- `simul` is now an actual game: a keyboard-only **movement roguelite**. Five procedural
+  sectors per run; collect data shards to open the exit gate; dash (with i-frames) is the
+  whole defensive kit. Concept locked in the GDD.
+- Systems shipped: momentum movement + dash charges, 4 autonomous hazard types (drifter/
+  seeker/sweeper/pulsar), escalating "heat" spawns, 1-of-3 mod drafts between sectors,
+  flux → cores meta-progression with a 3-track upgrade shop, localStorage save, seeded
+  deterministic generation, particles/screenshake, full menu flow (title/pause/draft/
+  death/victory).
+- Verified in headless Chromium: title, gameplay, pause, plus a 30s random-input soak —
+  no runtime errors; heat spawning and damage/i-frames confirmed on screen.
+- **Key decisions:**
+  - **Keyboard-only, no aiming.** Keeps the game purely about movement (pillar #1) and
+    dodges mouse/camera coupling entirely.
+  - **Plain canvas held up — no engine.** The hand-rolled fixed-timestep loop + 2D
+    context comfortably handles ~30 agents + 400 particles. Phaser/Three.js stay out.
+  - **All randomness flows through a seeded PRNG stored in run state** (mulberry32);
+    `Math.random` only picks new-run seeds. Runs are reproducible; the seed shows in the
+    HUD. Cosmetic particles deliberately *don't* drain the RNG so juice never changes
+    generation.
+  - **Particles/shake live in game state** (updated in `update`, drawn in `render`) to
+    honor the "render is read-only" rule while keeping state serializable.
+  - **Save format versioned** under the localStorage key `simul.save.v1`, loaded
+    defensively so a corrupt save can never brick the game.
+- **Next:** playtest & tune the difficulty curve (esp. sectors 4–5), then audio. Add
+  Vitest for `sector.ts`/`physics.ts`/`rng.ts` once numbers stop moving daily.
+
 ## 2026-07-21 — Project kickoff & scaffolding
 
 - Set up the repo as a lean, solo-optimized game project.

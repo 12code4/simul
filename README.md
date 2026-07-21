@@ -1,27 +1,42 @@
 # simul
 
-> Working title. A game project in early development.
+> A keyboard-only movement roguelite. Five simulated sectors. Don't get touched.
 
-`simul` is a browser-based game built with **TypeScript** and **Vite**. It's in the
-scaffolding stage: the engine skeleton runs, and the concept is being defined in the
-[Game Design Document](docs/GDD.md).
+You pilot an unarmed probe through a hostile simulation: thrust, dash (brief
+invulnerability), and nothing else. Collect data shards to open each sector's exit gate
+while autonomous hazards — drifters, seekers, sweepers, pulsars — run their simple rules
+around you and pressure escalates the longer you stay. Clear five sectors to beat the
+run; die and your flux still banks into permanent upgrades.
+
+Built with **TypeScript + Vite** on a plain `<canvas>` — no game engine.
 
 ## Status
 
-🌱 **Pre-prototype.** Runnable skeleton (a bouncing placeholder) is in place. Concept,
-mechanics, and MVP scope are being written up in the GDD.
+🎮 **First playable.** The full run loop works end to end: procedural sectors, drafts,
+meta-progression, win/lose flow. Balance and audio are still to come — see the
+[GDD](docs/GDD.md) for scope.
 
 ## Quick start
 
 Requires [Node.js](https://nodejs.org/) 18+.
 
 ```bash
-npm install       # install dependencies
-npm run dev       # start the dev server with hot reload, then open the printed URL
+npm install
+npm run dev       # start the dev server, open the printed URL, press ENTER to run
 ```
 
-You should see a ball bouncing in a canvas — that confirms the render + game loop
-pipeline works end to end.
+### How to play
+
+| Input | Action |
+|---|---|
+| WASD / arrows | Thrust |
+| Space or Shift | Dash — invulnerable while dashing |
+| Esc | Pause |
+| Enter / 1–3 | Menus: confirm / buy upgrades / pick draft cards |
+
+Collect all **gold shards** to open the **exit gate**. Green motes are flux — currency
+that banks into **cores** when the run ends (win *or* lose) and buys permanent upgrades
+on the title screen. After each cleared sector, draft one of three movement mods.
 
 ### Other commands
 
@@ -35,25 +50,29 @@ npm run preview     # serve the production build locally
 
 ```
 src/
-  main.ts          # entry point — wires up the canvas and starts the loop
+  main.ts          # entry point — canvas + input wiring, starts the loop
   game/
-    loop.ts        # fixed-timestep update + render loop
-    state.ts       # game state shape and initial state
-    config.ts      # tunable constants
+    config.ts      # every tunable: physics, hazard stats, sector table, colors
+    state.ts       # GameState/RunState shapes — one serializable object tree
+    update.ts      # the simulation: phase machine + fixed-step gameplay logic
+    render.ts      # canvas drawing: world, HUD, menus (read-only w.r.t. state)
+    loop.ts        # fixed-timestep driver
+    sector.ts      # seeded procedural sector generation
+    physics.ts     # circle/AABB collision helpers
+    rng.ts         # deterministic PRNG (mulberry32), state lives in RunState
+    input.ts       # keyboard tracking (held keys + edge-triggered presses)
+    mods.ts        # in-run draft modifications
+    meta.ts        # persistent progression (localStorage)
 docs/
-  GDD.md           # Game Design Document — the vision (start here for the "what")
-  DEVLOG.md        # running development journal
+  GDD.md           # Game Design Document — pillars, systems, scope
+  DEVLOG.md        # dev journal + the "why" behind decisions
 ```
 
 ## Documentation
 
-- **[Game Design Document](docs/GDD.md)** — what we're building and why.
-- **[Dev log](docs/DEVLOG.md)** — what changed, session by session.
+- **[Game Design Document](docs/GDD.md)** — what the game is and why.
+- **[Dev log](docs/DEVLOG.md)** — what changed, session by session, decisions included.
 - **[CLAUDE.md](CLAUDE.md)** — conventions and how-to-run notes (for AI assistants and future me).
-
-## Contributing / workflow
-
-Solo project for now. See [CLAUDE.md](CLAUDE.md) for the commit and branching conventions.
 
 ## License
 
