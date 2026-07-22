@@ -11,16 +11,7 @@ import { clamp, dist } from "./physics";
 import { range, rangeInt } from "./rng";
 import { sectorDef, type Hazard, type SectorState } from "./sector";
 import { createRun, enterSector, type GameState, type RunState } from "./state";
-import {
-  detonate,
-  igniteAt,
-  MAT,
-  matAt,
-  resolveCircleSubstrate,
-  spillAcidAt,
-  splashMaterial,
-  stepSubstrate,
-} from "./substrate";
+import { detonate, MAT, matAt, resolveCircleSubstrate } from "./substrate";
 import { CONTINUE_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect } from "./ui";
 
 export function update(state: GameState, input: Input, dt: number): void {
@@ -266,58 +257,8 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   const s = run.stats;
   const sec = run.sector;
   const def = sectorDef(sec.index);
-  const mats = config.materials;
   run.time += dt;
   sec.elapsed += dt;
-
-  stepSubstrate(sec.substrate, dt);
-
-  // What is the player standing in?
-  const groundMat = matAt(sec.substrate, p.x, p.y);
-  let speedMult = 1;
-  let accelMult = 1;
-  let dragMult = 1;
-  if (groundMat === MAT.coolant) {
-    if (!s.hydroJets) speedMult = mats.coolantSpeedMult;
-    p.wet = mats.wetDuration;
-    p.oiled = 0;
-    if (p.burning > 0) {
-      p.burning = 0;
-      addBurst(run, p.x, p.y, config.colors.steam, 10);
-    }
-  } else if (groundMat === MAT.oil) {
-    if (!s.slickCoating) {
-      accelMult = mats.oilAccelMult;
-      dragMult = mats.oilDragMult;
-    }
-    p.oiled = mats.oiledDuration;
-  } else if (groundMat === MAT.fire) {
-    tryIgnitePlayer(run);
-  } else if (groundMat === MAT.acid) {
-    p.acidTimer -= dt;
-    if (p.acidTimer <= 0 && p.iframes <= 0 && p.dashTimer <= 0) {
-      p.acidTimer = mats.acidDamageInterval;
-      damagePlayer(state, run, -p.faceX, -p.faceY);
-      if (state.phase !== "playing") return;
-    }
-  }
-  if (groundMat !== MAT.acid) p.acidTimer = 0;
-
-  // Status timers. Burning deals its damage partway through the countdown —
-  // reaching coolant first extinguishes it.
-  if (p.burning > 0) {
-    const before = p.burning;
-    p.burning -= dt;
-    addParticle(run, p.x + Math.sin(run.time * 31) * 6, p.y - 8, 0, -60, 0.3, 3, config.colors.fire);
-    if (before > mats.burnDamageAt && p.burning <= mats.burnDamageAt) {
-      damagePlayer(state, run, -p.faceX, -p.faceY);
-      if (state.phase !== "playing") return;
-    }
-    // A burning probe drips fire onto flammable ground it crosses.
-    if (matAt(sec.substrate, p.x, p.y) === MAT.oil) igniteAt(sec.substrate, p.x, p.y);
-  }
-  p.wet = Math.max(0, p.wet - dt);
-  p.oiled = Math.max(0, p.oiled - dt);
 
   // Movement + dash.
   const ax = input.axis();
@@ -359,17 +300,15 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
       p.vy = p.dashY * s.maxSpeed;
     }
     addParticle(run, p.x, p.y, -p.dashX * 40, -p.dashY * 40, 0.25, 4, config.colors.player);
-    if (s.corrosiveWake) spillAcidAt(sec.substrate, p.x, p.y);
   } else {
-    p.vx += ax.x * s.accel * accelMult * dt;
-    p.vy += ax.y * s.accel * accelMult * dt;
-    const damp = Math.exp(-s.drag * dragMult * dt);
+    p.vx += ax.x * s.accel * dt;
+    p.vy += ax.y * s.accel * dt;
+    const damp = Math.exp(-s.drag * dt);
     p.vx *= damp;
     p.vy *= damp;
-    const cap = s.maxSpeed * speedMult;
     const sp = Math.hypot(p.vx, p.vy);
-    if (sp > cap) {
-      const k = cap / sp;
+    if (sp > s.maxSpeed) {
+      const k = s.maxSpeed / sp;
       p.vx *= k;
       p.vy *= k;
     }
@@ -432,14 +371,6 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   run.camY = sec.h <= config.height ? sec.h / 2 : clamp(run.camY, halfH, sec.h - halfH);
 
   tickCosmetics(run, dt);
-}
-
-function tryIgnitePlayer(run: RunState): void {
-  const p = run.player;
-  if (p.burning > 0 || p.wet > 0 || run.stats.fireproof) return;
-  if (p.dashTimer > 0) return; // dashing skims over flames
-  p.burning = config.materials.burnDuration * (p.oiled > 0 ? 1.4 : 1);
-  addBurst(run, p.x, p.y, config.colors.fire, 8);
 }
 
 // --- casting & projectiles -------------------------------------------------
@@ -508,11 +439,12 @@ function castFromDeck(run: RunState, aimX: number, aimY: number): void {
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       r: 4,
-      dmg: def.dmg,
+      dmg: def.dmg + mods.dmgAdd,
       card: payload,
       life: def.life,
       bounces: mods.bounces,
       pierce: mods.pierce,
+      homing: def.homing,
       hitIds: [],
     });
   }
@@ -547,9 +479,34 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
     const pr = sec.projectiles[i];
     pr.life -= dt;
     if (pr.life <= 0) {
-      projectileImpact(run, sec, pr.x, pr.y, pr.card);
+      addBurst(run, pr.x, pr.y, CARDS[pr.card].color, 4);
       sec.projectiles.splice(i, 1);
       continue;
+    }
+
+    // Homing payloads curve toward the nearest agent in range.
+    if (pr.homing && sec.hazards.length > 0) {
+      let best: Hazard | null = null;
+      let bestD: number = config.caster.homingRange;
+      for (const hzd of sec.hazards) {
+        if (pr.hitIds.includes(hzd.id)) continue;
+        const d = dist(hzd.x, hzd.y, pr.x, pr.y);
+        if (d < bestD) {
+          bestD = d;
+          best = hzd;
+        }
+      }
+      if (best) {
+        const speed = Math.hypot(pr.vx, pr.vy);
+        const want = Math.atan2(best.y - pr.y, best.x - pr.x);
+        const cur = Math.atan2(pr.vy, pr.vx);
+        let diff = want - cur;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        const turn = clamp(diff, -config.caster.homingSteer * dt, config.caster.homingSteer * dt);
+        pr.vx = Math.cos(cur + turn) * speed;
+        pr.vy = Math.sin(cur + turn) * speed;
+      }
     }
 
     // Substep the motion so fast (hasted) shots can't tunnel through
@@ -579,7 +536,7 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
         pr.y = oldY;
         addBurst(run, pr.x, pr.y, CARDS[pr.card].color, 3);
       } else {
-        projectileImpact(run, sec, oldX, oldY, pr.card);
+        addBurst(run, oldX, oldY, CARDS[pr.card].color, 5);
         sec.projectiles.splice(i, 1);
       }
       continue;
@@ -593,42 +550,24 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
     }
 
     // Hazard hits.
-    let consumed = false;
     for (let h = sec.hazards.length - 1; h >= 0; h--) {
       const hzd = sec.hazards[h];
       if (pr.hitIds.includes(hzd.id)) continue;
       if (dist(hzd.x, hzd.y, pr.x, pr.y) >= hzd.r + pr.r) continue;
       pr.hitIds.push(hzd.id);
-      damageHazard(run, sec, h, pr.dmg, pr.card);
-      projectileImpact(run, sec, pr.x, pr.y, pr.card);
+      damageHazard(run, sec, h, pr.dmg);
+      addBurst(run, pr.x, pr.y, CARDS[pr.card].color, 5);
       if (!pr.pierce) {
         sec.projectiles.splice(i, 1);
-        consumed = true;
         break;
       }
     }
-    if (consumed) continue;
   }
 }
 
-/** Impact side effects: material payload cards splash into the substrate. */
-function projectileImpact(run: RunState, sec: SectorState, x: number, y: number, card: CardId): void {
-  const def = CARDS[card];
-  addBurst(run, x, y, def.color, 5);
-  if (def.splash) {
-    splashMaterial(sec.substrate, x, y, config.caster.splashRadius, def.splash);
-  }
-}
-
-/** Apply card damage and card-specific statuses to a hazard. */
-function damageHazard(run: RunState, sec: SectorState, index: number, dmg: number, card: CardId): void {
+/** Apply card damage to a hazard. */
+function damageHazard(run: RunState, sec: SectorState, index: number, dmg: number): void {
   const hzd = sec.hazards[index];
-  if (card === "firebolt" && (hzd.kind === "drifter" || hzd.kind === "seeker" || hzd.kind === "corroder")) {
-    hzd.burn = Math.max(hzd.burn, config.materials.hazardBurnTime);
-  }
-  if (card === "waterball" && (hzd.kind === "drifter" || hzd.kind === "seeker" || hzd.kind === "corroder")) {
-    hzd.burn = 0;
-  }
   hzd.hp -= dmg;
   if (hzd.hp <= 0) destroyHazard(run, sec, index);
 }
@@ -643,10 +582,6 @@ function destroyHazard(run: RunState, sec: SectorState, index: number): void {
   for (let d = 0; d < drops; d++) {
     sec.motes.push({ x: hzd.x + (d - drops / 2) * 10, y: hzd.y + ((d * 7) % 13) - 6 });
   }
-  // A corroder ruptures into an acid splash — stand back.
-  if (hzd.kind === "corroder") {
-    splashMaterial(sec.substrate, hzd.x, hzd.y, 26, "acid");
-  }
   sec.hazards.splice(index, 1);
 }
 
@@ -656,8 +591,6 @@ function hazardColor(hzd: Hazard): string {
     case "seeker": return config.colors.seeker;
     case "sweeper": return config.colors.sweeper;
     case "pulsar": return config.colors.pulsar;
-    case "igniter": return config.colors.igniter;
-    case "corroder": return config.colors.corroder;
   }
 }
 
@@ -666,33 +599,12 @@ function hazardColor(hzd: Hazard): string {
 function updateHazards(run: RunState, sec: SectorState, dt: number): void {
   const hz = config.hazards;
   const p = run.player;
-  const playerInSteam = matAt(sec.substrate, p.x, p.y) === MAT.steam;
 
-  for (let h = sec.hazards.length - 1; h >= 0; h--) {
-    const hzd = sec.hazards[h];
-
-    // Shared status handling for burnable ground agents.
-    if (hzd.kind === "drifter" || hzd.kind === "seeker" || hzd.kind === "corroder") {
-      const ground = matAt(sec.substrate, hzd.x, hzd.y);
-      if (ground === MAT.fire && hzd.burn <= 0) hzd.burn = config.materials.hazardBurnTime;
-      if (ground === MAT.coolant && hzd.burn > 0) hzd.burn = 0;
-      if (hzd.burn > 0) {
-        hzd.burn -= dt;
-        addParticle(run, hzd.x, hzd.y - 6, 0, -50, 0.25, 2.5, config.colors.fire);
-        if (ground === MAT.oil) igniteAt(sec.substrate, hzd.x, hzd.y);
-        if (hzd.burn <= 0) {
-          destroyHazard(run, sec, h);
-          continue;
-        }
-      }
-    }
-
+  for (const hzd of sec.hazards) {
     switch (hzd.kind) {
       case "drifter": {
-        const ground = matAt(sec.substrate, hzd.x, hzd.y);
-        const mult = ground === MAT.coolant ? config.materials.coolantSpeedMult : 1;
-        hzd.x += hzd.vx * mult * dt;
-        hzd.y += hzd.vy * mult * dt;
+        hzd.x += hzd.vx * dt;
+        hzd.y += hzd.vy * dt;
         bounceOffTerrain(sec, hzd);
         break;
       }
@@ -705,19 +617,14 @@ function updateHazards(run: RunState, sec: SectorState, dt: number): void {
         const ddx = desX - hzd.vx;
         const ddy = desY - hzd.vy;
         const dl = Math.hypot(ddx, ddy);
-        const ground = matAt(sec.substrate, hzd.x, hzd.y);
-        // Steam hides you; oil makes their steering mushy.
-        let steer = hz.seeker.steer;
-        if (playerInSteam) steer *= config.materials.steamSeekerMult;
-        if (ground === MAT.oil) steer *= 0.5;
         if (dl > 0.001) {
-          const f = Math.min(1, (steer * dt) / dl);
+          const f = Math.min(1, (hz.seeker.steer * dt) / dl);
           hzd.vx += ddx * f;
           hzd.vy += ddy * f;
         }
-        const mult = ground === MAT.coolant ? config.materials.coolantSpeedMult : 1;
-        hzd.x += hzd.vx * mult * dt;
-        hzd.y += hzd.vy * mult * dt;
+        hzd.x += hzd.vx * dt;
+        hzd.y += hzd.vy * dt;
+        // Seekers slide along walls (emergent: walls work as cover).
         const hit = resolveCircleSubstrate(sec.substrate, hzd.x, hzd.y, hzd.r);
         if (hit) {
           hzd.x = hit.x;
@@ -745,36 +652,6 @@ function updateHazards(run: RunState, sec: SectorState, dt: number): void {
           hzd.timer += hz.pulsar.cycle;
           sec.rings.push({ x: hzd.x, y: hzd.y, age: 0 });
         }
-        break;
-      }
-      case "igniter": {
-        hzd.x += hzd.vx * dt;
-        hzd.y += hzd.vy * dt;
-        bounceOffTerrain(sec, hzd);
-        const ground = matAt(sec.substrate, hzd.x, hzd.y);
-        if (ground === MAT.coolant) {
-          // Quenched: dies in a puff of steam.
-          addBurst(run, hzd.x, hzd.y, config.colors.steam, 12);
-          run.kills += 1;
-          sec.hazards.splice(h, 1);
-          break;
-        }
-        igniteAt(sec.substrate, hzd.x, hzd.y);
-        break;
-      }
-      case "corroder": {
-        hzd.turnTimer -= dt;
-        if (hzd.turnTimer <= 0) {
-          hzd.turnTimer = config.hazards.corroder.turnEvery;
-          // Deterministic wander: new heading from position+time hash.
-          const a = (Math.sin(hzd.x * 0.013 + hzd.y * 0.017 + sec.elapsed * 3.1) * 43758.5453) % (Math.PI * 2);
-          hzd.vx = Math.cos(a) * config.hazards.corroder.speed;
-          hzd.vy = Math.sin(a) * config.hazards.corroder.speed;
-        }
-        hzd.x += hzd.vx * dt;
-        hzd.y += hzd.vy * dt;
-        bounceOffTerrain(sec, hzd);
-        spillAcidAt(sec.substrate, hzd.x, hzd.y);
         break;
       }
     }
@@ -816,20 +693,20 @@ function updateCanisters(state: GameState, run: RunState, sec: SectorState, dt: 
   for (let i = sec.canisters.length - 1; i >= 0; i--) {
     const can = sec.canisters[i];
     if (can.fuse < 0) {
-      // Armed: fire cooks it off; a dashing player triggers it deliberately.
-      const onFire = matAt(sec.substrate, can.x, can.y) === MAT.fire;
+      // Armed: a dashing (invulnerable) player triggers it deliberately;
+      // projectiles trigger it in updateProjectiles.
       const dashTouch = p.dashTimer > 0 && dist(p.x, p.y, can.x, can.y) < can.r + config.player.radius;
-      if (onFire || dashTouch) can.fuse = cfg.fuse;
+      if (dashTouch) can.fuse = cfg.fuse;
       continue;
     }
     can.fuse -= dt;
     if (can.fuse > 0) continue;
 
     sec.canisters.splice(i, 1);
-    detonate(sec.substrate, can.x, can.y, cfg.carveRadius, cfg.igniteRadius);
+    detonate(sec.substrate, can.x, can.y, cfg.carveRadius);
     run.shake = 1.6;
     addBurst(run, can.x, can.y, config.colors.canister, 26);
-    addBurst(run, can.x, can.y, config.colors.fireHot, 18);
+    addBurst(run, can.x, can.y, config.colors.blast, 18);
 
     // Chain other canisters with a short stagger.
     for (const other of sec.canisters) {
@@ -886,7 +763,6 @@ function updateHeat(run: RunState, sec: SectorState, interval: number, cap: numb
       vx: ((tx - x) / d) * speed,
       vy: ((ty - y) / d) * speed,
       r: range(rng, hz.rMin, hz.rMax),
-      burn: 0,
     });
     sec.heatSpawned += 1;
     addBurst(run, x, y, config.colors.drifter, 8);

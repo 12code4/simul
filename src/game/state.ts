@@ -22,11 +22,7 @@ export interface RunStats {
   dashDuration: number;
   pickupRadius: number;
   iframeMult: number;
-  // Substrate-interaction mods.
-  fireproof: boolean;
-  hydroJets: boolean;
-  slickCoating: boolean;
-  corrosiveWake: boolean;
+  /** Demolition Sync mod: explosions can't hurt the player. */
   demolition: boolean;
 }
 
@@ -43,13 +39,6 @@ export interface PlayerState {
   charges: number;
   recharge: number;
   iframes: number;
-  // Status timers (0 = inactive). Burning counts DOWN from burnDuration and
-  // deals its damage when crossing burnDamageAt — extinguish in coolant first.
-  burning: number;
-  wet: number;
-  oiled: number;
-  /** Time until the next acid damage tick while standing in acid. */
-  acidTimer: number;
 }
 
 export interface Particle {
@@ -168,10 +157,6 @@ export function computeRunStats(meta: MetaState): RunStats {
     dashDuration: config.dash.duration,
     pickupRadius: config.player.pickupRadius,
     iframeMult: 1,
-    fireproof: false,
-    hydroJets: false,
-    slickCoating: false,
-    corrosiveWake: false,
     demolition: false,
   };
 }
@@ -190,10 +175,6 @@ function makePlayer(sector: SectorState, stats: RunStats): PlayerState {
     charges: stats.dashCharges,
     recharge: 0,
     iframes: 1.2, // spawn grace so nothing cheap-shots a fresh sector
-    burning: 0,
-    wet: 0,
-    oiled: 0,
-    acidTimer: 0,
   };
 }
 

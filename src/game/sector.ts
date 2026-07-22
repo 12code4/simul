@@ -1,7 +1,7 @@
 // Seeded procedural generation of a sector: terrain (stamped into the
-// substrate grid — destructible!), material pools, data shards, flux motes,
-// autonomous hazards, canisters, spawn point, and the exit gate. Placement is
-// rejection sampling with clearance rules, deterministic per seed.
+// substrate grid — destructible!), data shards, flux motes, autonomous
+// hazards, canisters, card pickups, spawn point, and the exit gate. Placement
+// is rejection sampling with clearance rules, deterministic per seed.
 
 import type { CardId } from "./cards";
 import { config } from "./config";
@@ -9,12 +9,9 @@ import { clamp, dist, type Rect } from "./physics";
 import { nextFloat, range, shuffle, type Rng } from "./rng";
 import {
   createSubstrate,
-  MAT,
-  paintPool,
   solidInCircle,
   stampWallRect,
   SUB,
-  type MatId,
   type Substrate,
 } from "./substrate";
 
@@ -24,12 +21,10 @@ export interface PointItem {
 }
 
 export type Hazard =
-  | { kind: "drifter"; id: number; hp: number; x: number; y: number; vx: number; vy: number; r: number; burn: number }
-  | { kind: "seeker"; id: number; hp: number; x: number; y: number; vx: number; vy: number; r: number; burn: number }
+  | { kind: "drifter"; id: number; hp: number; x: number; y: number; vx: number; vy: number; r: number }
+  | { kind: "seeker"; id: number; hp: number; x: number; y: number; vx: number; vy: number; r: number }
   | { kind: "sweeper"; id: number; hp: number; x: number; y: number; r: number; ax: number; ay: number; bx: number; by: number; phase: number; rate: number }
-  | { kind: "pulsar"; id: number; hp: number; x: number; y: number; r: number; timer: number }
-  | { kind: "igniter"; id: number; hp: number; x: number; y: number; vx: number; vy: number; r: number }
-  | { kind: "corroder"; id: number; hp: number; x: number; y: number; vx: number; vy: number; r: number; turnTimer: number; burn: number };
+  | { kind: "pulsar"; id: number; hp: number; x: number; y: number; r: number; timer: number };
 
 /** A card pickup in the world. */
 export interface CardNode {
@@ -50,6 +45,7 @@ export interface Projectile {
   life: number;
   bounces: number;
   pierce: boolean;
+  homing: boolean;
   /** Hazard ids already damaged (so pierce can't multi-hit per frame). */
   hitIds: number[];
 }
@@ -113,20 +109,19 @@ export function generateSector(rng: Rng, index: number): SectorState {
   const substrate = createSubstrate(w, h);
 
   // Arena border: one cell of wall all around so the world stays sealed even
-  // when explosions and acid carve the interior.
+  // when explosions carve the interior (detonate never touches the border).
   const c = SUB.cellSize;
   stampWallRect(substrate, 0, 0, w, c);
   stampWallRect(substrate, 0, h - c, w, c);
   stampWallRect(substrate, 0, 0, c, h);
   stampWallRect(substrate, w - c, 0, c, h);
 
-  // Interior walls: same rect placement rules as before, then stamped into
-  // the grid so they can be dissolved/destroyed during play.
+  // Interior walls, stamped into the grid so they can be destroyed in play.
   const wallRects: Rect[] = [];
   for (let i = 0; i < def.walls; i++) {
     for (let attempt = 0; attempt < 40; attempt++) {
-      const ww = range(rng, 80, 260);
-      const wh = range(rng, 80, 260);
+      const ww = range(rng, 70, 190);
+      const wh = range(rng, 70, 190);
       const rect: Rect = {
         x: range(rng, margin, w - margin - ww),
         y: range(rng, margin, h - margin - wh),
@@ -142,10 +137,44 @@ export function generateSector(rng: Rng, index: number): SectorState {
     }
   }
 
-  // Material pools, painted as clusters of overlapping blobs.
-  paintPools(substrate, rng, def.coolantPools, MAT.coolant, 0, spawn, gate, w, h);
-  paintPools(substrate, rng, def.oilPools, MAT.oil, 0, spawn, gate, w, h);
-  paintPools(substrate, rng, def.acidPools, MAT.acid, SUB.acidAmount, spawn, gate, w, h);
+  // Card pickups: some in the open, some sealed inside destructible wall
+  // rings ("caches"). Each cache gets a canister within reach — the key.
+  const canisters: Canister[] = [];
+  const cardNodes: CardNode[] = [];
+  const cardPicks = rollCardPicks(rng, index, def.cardNodes + def.caches, def.caches);
+  for (let i = 0; i < def.cardNodes + def.caches; i++) {
+    const cached = i >= def.cardNodes;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const x = range(rng, 140, w - 140);
+      const y = range(rng, 140, h - 140);
+      if (dist(x, y, spawn.x, spawn.y) < 320) continue;
+      if (dist(x, y, gate.x, gate.y) < 180) continue;
+      if (solidInCircle(substrate, x, y, cached ? 60 : 26)) continue;
+      if (cardNodes.some((n) => dist(n.x, n.y, x, y) < 260)) continue;
+      cardNodes.push({ x, y, card: cardPicks[i] });
+      if (cached) {
+        stampCacheRing(substrate, x, y);
+        // The key: a canister just outside the ring, at a deterministic angle.
+        const a = nextFloat(rng) * Math.PI * 2;
+        const kx = clamp(x + Math.cos(a) * 78, 40, w - 40);
+        const ky = clamp(y + Math.sin(a) * 78, 40, h - 40);
+        canisters.push({ x: kx, y: ky, r: config.canister.r, fuse: -1 });
+      }
+      break;
+    }
+  }
+
+  for (let i = 0; i < def.canisters; i++) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const x = range(rng, margin + 40, w - margin - 40);
+      const y = range(rng, margin + 40, h - margin - 40);
+      if (dist(x, y, spawn.x, spawn.y) < 300) continue;
+      if (dist(x, y, gate.x, gate.y) < 160) continue;
+      if (solidInCircle(substrate, x, y, 24)) continue;
+      canisters.push({ x, y, r: config.canister.r, fuse: -1 });
+      break;
+    }
+  }
 
   const shards: PointItem[] = [];
   for (let i = 0; i < def.shards; i++) {
@@ -171,38 +200,6 @@ export function generateSector(rng: Rng, index: number): SectorState {
     }
   }
 
-  const canisters: Canister[] = [];
-  for (let i = 0; i < def.canisters; i++) {
-    for (let attempt = 0; attempt < 40; attempt++) {
-      const x = range(rng, margin + 40, w - margin - 40);
-      const y = range(rng, margin + 40, h - margin - 40);
-      if (dist(x, y, spawn.x, spawn.y) < 300) continue;
-      if (dist(x, y, gate.x, gate.y) < 160) continue;
-      if (solidInCircle(substrate, x, y, 24)) continue;
-      canisters.push({ x, y, r: config.canister.r, fuse: -1 });
-      break;
-    }
-  }
-
-  // Card pickups: some in the open, some sealed inside destructible wall
-  // rings ("caches") that acid, canisters, or Corrosive Wake can crack open.
-  const cardNodes: CardNode[] = [];
-  const cardPicks = rollCardPicks(rng, index, def.cardNodes + def.caches, def.caches);
-  for (let i = 0; i < def.cardNodes + def.caches; i++) {
-    const cached = i >= def.cardNodes;
-    for (let attempt = 0; attempt < 40; attempt++) {
-      const x = range(rng, 140, w - 140);
-      const y = range(rng, 140, h - 140);
-      if (dist(x, y, spawn.x, spawn.y) < 320) continue;
-      if (dist(x, y, gate.x, gate.y) < 180) continue;
-      if (solidInCircle(substrate, x, y, cached ? 60 : 26)) continue;
-      if (cardNodes.some((n) => dist(n.x, n.y, x, y) < 260)) continue;
-      cardNodes.push({ x, y, card: cardPicks[i] });
-      if (cached) stampCacheRing(substrate, x, y);
-      break;
-    }
-  }
-
   const hz = config.hazards;
   const hazards: Hazard[] = [];
 
@@ -219,7 +216,6 @@ export function generateSector(rng: Rng, index: number): SectorState {
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         r: range(rng, hz.drifter.rMin, hz.drifter.rMax),
-        burn: 0,
       };
     });
   }
@@ -234,7 +230,6 @@ export function generateSector(rng: Rng, index: number): SectorState {
       vx: 0,
       vy: 0,
       r: hz.seeker.r,
-      burn: 0,
     }));
   }
 
@@ -280,41 +275,6 @@ export function generateSector(rng: Rng, index: number): SectorState {
     }
   }
 
-  for (let i = 0; i < def.igniters; i++) {
-    placeMoving(rng, substrate, hazards, spawn, w, h, 380, (x, y) => {
-      const speed = range(rng, hz.igniter.speedMin, hz.igniter.speedMax);
-      const angle = nextFloat(rng) * Math.PI * 2;
-      return {
-        kind: "igniter",
-        id: 0,
-        hp: hz.igniter.hp,
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        r: hz.igniter.r,
-      };
-    });
-  }
-
-  for (let i = 0; i < def.corroders; i++) {
-    placeMoving(rng, substrate, hazards, spawn, w, h, 420, (x, y) => {
-      const angle = nextFloat(rng) * Math.PI * 2;
-      return {
-        kind: "corroder",
-        id: 0,
-        hp: hz.corroder.hp,
-        x,
-        y,
-        vx: Math.cos(angle) * hz.corroder.speed,
-        vy: Math.sin(angle) * hz.corroder.speed,
-        r: hz.corroder.r,
-        turnTimer: range(rng, 0.5, hz.corroder.turnEvery),
-        burn: 0,
-      };
-    });
-  }
-
   // Stable ids for damage tracking; heat spawns continue from nextId.
   hazards.forEach((hzd, i) => {
     hzd.id = i;
@@ -342,15 +302,38 @@ export function generateSector(rng: Rng, index: number): SectorState {
   };
 }
 
+// --- placement helpers ------------------------------------------------------
+
+function placeMoving(
+  rng: Rng,
+  substrate: Substrate,
+  hazards: Hazard[],
+  spawn: PointItem,
+  w: number,
+  h: number,
+  spawnClearance: number,
+  make: (x: number, y: number) => Hazard,
+): void {
+  const margin = 60;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const x = range(rng, margin, w - margin);
+    const y = range(rng, margin, h - margin);
+    if (dist(x, y, spawn.x, spawn.y) < spawnClearance) continue;
+    if (solidInCircle(substrate, x, y, 20)) continue;
+    hazards.push(make(x, y));
+    return;
+  }
+}
+
 /**
  * Pick cards for this sector's nodes. Sector 1 rolls payloads only (teach the
- * combos before the wrappers); later sectors roll the full pool. Caches (the
+ * shots before the wrappers); later sectors roll the full pool. Caches (the
  * trailing picks) lean on the strongest cards so cracking them feels earned.
  */
 function rollCardPicks(rng: Rng, index: number, count: number, cacheCount: number): CardId[] {
-  const payloads: CardId[] = ["firebolt", "waterball", "burst", "oilslick"];
-  const full: CardId[] = ["firebolt", "waterball", "burst", "oilslick", "acidspit", "twin", "haste", "bounce", "pierce", "blink"];
-  const strong: CardId[] = ["acidspit", "twin", "pierce", "blink", "bounce"];
+  const payloads: CardId[] = ["burst", "slug", "dart"];
+  const full: CardId[] = ["burst", "slug", "dart", "twin", "haste", "bounce", "pierce", "heavy", "blink"];
+  const strong: CardId[] = ["twin", "pierce", "blink", "dart", "heavy"];
   const pool = shuffle(rng, (index === 0 ? payloads : full).slice());
   const cachePool = shuffle(rng, strong.slice());
   const picks: CardId[] = [];
@@ -382,61 +365,6 @@ function stampCacheRing(sub: Substrate, x: number, y: number): void {
       if (d >= inner && d <= outer) {
         stampWallRect(sub, cx * c, cy * c, 1, 1);
       }
-    }
-  }
-}
-
-// --- placement helpers ------------------------------------------------------
-
-function placeMoving(
-  rng: Rng,
-  substrate: Substrate,
-  hazards: Hazard[],
-  spawn: PointItem,
-  w: number,
-  h: number,
-  spawnClearance: number,
-  make: (x: number, y: number) => Hazard,
-): void {
-  const margin = 60;
-  for (let attempt = 0; attempt < 40; attempt++) {
-    const x = range(rng, margin, w - margin);
-    const y = range(rng, margin, h - margin);
-    if (dist(x, y, spawn.x, spawn.y) < spawnClearance) continue;
-    if (solidInCircle(substrate, x, y, 20)) continue;
-    hazards.push(make(x, y));
-    return;
-  }
-}
-
-function paintPools(
-  substrate: Substrate,
-  rng: Rng,
-  count: number,
-  mat: MatId,
-  fuel: number,
-  spawn: PointItem,
-  gate: Gate,
-  w: number,
-  h: number,
-): void {
-  for (let i = 0; i < count; i++) {
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const x = range(rng, 120, w - 120);
-      const y = range(rng, 120, h - 120);
-      // Keep the spawn area dry and the gate reachable without forced damage.
-      if (dist(x, y, spawn.x, spawn.y) < 240) continue;
-      if (mat === MAT.acid && dist(x, y, gate.x, gate.y) < 200) continue;
-      // Cluster of 2–4 overlapping blobs for an organic footprint.
-      const blobs = 2 + Math.floor(nextFloat(rng) * 3);
-      let bx = x;
-      let by = y;
-      for (let b = 0; b < blobs; b++) {
-        paintPool(substrate, bx, by, range(rng, 45, 90), mat, fuel);
-        bx += range(rng, -70, 70);
-        by += range(rng, -70, 70);
-      }
-      break;
     }
   }
 }

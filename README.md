@@ -1,24 +1,23 @@
 # simul
 
-> A sandbox roguelite in a simulated world. Five open sectors. Fire spreads, acid
-> melts walls, and your weapon is a deck of cards.
+> A sandbox roguelite about movement and deck-building. Five big open sectors,
+> a dash with i-frames, and a weapon that is literally a deck of cards.
 
 **▶ Play in your browser: <https://12code4.github.io/simul/>**
 
-You pilot a fragile probe through a hostile simulation where the floor itself is
-simulated: oil catches fire, coolant quenches it into seeker-blinding steam, and acid
-dissolves the terrain. Your defense is movement — thrust and an invulnerable dash. Your
-offense is a **Caster**: an ordered deck of cards found in the world, cast Noita-wand
-style (modifier cards wrap the next payload; the deck recharges when it wraps). The
-hazards obey the same material rules you do — the strongest play is turning the
-simulation against its own agents.
+You pilot a fragile probe through a hostile simulation. Your defense is movement —
+thrust and an invulnerable dash. Your offense is a **Caster**: an ordered deck of
+cards found in the world, cast Noita-wand style — modifier cards fold into the next
+shot, deck order is cast order, and the deck recharges when it wraps. Find cards,
+crack open sealed caches with explosive canisters, rebuild your deck between sectors,
+and carve the destructible terrain while you're at it.
 
 Built with **TypeScript + Vite** on a plain `<canvas>` — no game engine.
 
 ## Status
 
-🎮 **v0.3 "Substrate & Casters".** Full run loop, material simulation, destructible
-terrain, and card combat all work end to end. Balance and audio are the current
+🎮 **v0.4 "The Caster".** Full run loop, card combat, deck editing, and destructible
+terrain all work end to end. Trigger cards, balance, and audio are the current
 frontier — see the [GDD](docs/GDD.md).
 
 ## Quick start
@@ -40,9 +39,10 @@ npm run dev       # start the dev server, open the printed URL, press ENTER to r
 | Esc | Pause |
 | Enter / 1–3 / click | Menus: confirm, buy upgrades, pick mods, edit your deck |
 
-Collect all **gold shards** to open the **exit gate**. Pick up **cards** (some sealed
-in destructible caches — acid and explosions are keys). Between sectors: draft a mod
-and reorder your deck — **deck order is cast order**. Green motes are flux; kills drop
+Collect all **gold shards** to open the **exit gate**. Pick up **cards** — some are
+sealed in destructible caches, and every cache has a canister next to it: shoot it or
+dash into it (you're invulnerable while dashing). Between sectors: draft a mod and
+reorder your deck — **deck order is cast order**. Green motes are flux; kills drop
 more; it all banks into **cores** for permanent upgrades when the run ends, win or
 lose. Dev hooks for testing: `?seed=<hex>&sector=<1-5>`.
 
@@ -62,11 +62,11 @@ src/
   game/
     config.ts      # every tunable: physics, materials, hazards, sector/biome table
     state.ts       # GameState/RunState shapes — one serializable object tree
-    update.ts      # the simulation: phase machine, casting, combat, materials
-    render.ts      # canvas drawing: substrate, world, HUD, menus (read-only)
-    substrate.ts   # the material cell grid + cellular automaton (destructible terrain)
+    update.ts      # the simulation: phase machine, casting, combat, deck editing
+    render.ts      # canvas drawing: terrain, world, HUD, menus (read-only)
+    substrate.ts   # the destructible terrain cell grid
     cards.ts       # the card/deck system data: payloads, modifiers, the Caster
-    sector.ts      # seeded procedural generation: terrain, pools, agents, caches
+    sector.ts      # seeded procedural generation: terrain, agents, caches
     ui.ts          # shared menu geometry (render and hit-testing stay in sync)
     loop.ts        # fixed-timestep driver
     physics.ts     # circle/AABB collision helpers

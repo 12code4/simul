@@ -8,14 +8,13 @@
 export type CardId =
   | "bolt"
   | "burst"
-  | "firebolt"
-  | "waterball"
-  | "acidspit"
-  | "oilslick"
+  | "slug"
+  | "dart"
   | "twin"
   | "haste"
   | "bounce"
   | "pierce"
+  | "heavy"
   | "blink";
 
 export type CardKind = "payload" | "modifier" | "utility";
@@ -37,8 +36,8 @@ export interface CardDef {
   pellets: number;
   /** Half-spread in radians applied across pellets. */
   spread: number;
-  /** Material splashed on impact (see substrate splash rules), or null. */
-  splash: "fire" | "coolant" | "acid" | "oil" | null;
+  /** Steers toward the nearest agent in flight. */
+  homing: boolean;
   /** Added to the caster's base cast delay when this card is the payload. */
   delayAdd: number;
 }
@@ -50,7 +49,7 @@ function card(partial: Partial<CardDef> & Pick<CardDef, "id" | "name" | "glyph" 
     life: 0,
     pellets: 1,
     spread: 0,
-    splash: null,
+    homing: false,
     delayAdd: 0,
     ...partial,
   };
@@ -66,25 +65,14 @@ export const CARDS: Record<CardId, CardDef> = {
     desc: "Three pellets, short range", dmg: 1, speed: 500, life: 0.38,
     pellets: 3, spread: 0.16, delayAdd: 0.12,
   }),
-  firebolt: card({
-    id: "firebolt", name: "Firebolt", glyph: "F", color: "#ff7a2d", kind: "payload",
-    desc: "Ignites what it touches", dmg: 1, speed: 480, life: 0.9,
-    splash: "fire", delayAdd: 0.06,
+  slug: card({
+    id: "slug", name: "Slug", glyph: "S", color: "#ffd75b", kind: "payload",
+    desc: "Slow, hits like a wall", dmg: 3, speed: 380, life: 1.0, delayAdd: 0.22,
   }),
-  waterball: card({
-    id: "waterball", name: "Waterball", glyph: "W", color: "#2f6da0", kind: "payload",
-    desc: "Splashes coolant, quenches fire", dmg: 1, speed: 430, life: 0.85,
-    splash: "coolant", delayAdd: 0.08,
-  }),
-  acidspit: card({
-    id: "acidspit", name: "Acid Spit", glyph: "A", color: "#5da62c", kind: "payload",
-    desc: "Heavy hit; melts terrain", dmg: 2, speed: 440, life: 0.85,
-    splash: "acid", delayAdd: 0.14,
-  }),
-  oilslick: card({
-    id: "oilslick", name: "Oil Slick", glyph: "O", color: "#54452e", kind: "payload",
-    desc: "Paints oil. Pairs with fire", dmg: 0, speed: 400, life: 0.8,
-    splash: "oil", delayAdd: 0.04,
+  dart: card({
+    id: "dart", name: "Seeker Dart", glyph: "D", color: "#5bffb0", kind: "payload",
+    desc: "Curves toward the nearest agent", dmg: 1, speed: 460, life: 1.1,
+    homing: true, delayAdd: 0.1,
   }),
   twin: card({
     id: "twin", name: "Twin Cast", glyph: "x2", color: "#c05bff", kind: "modifier",
@@ -101,6 +89,10 @@ export const CARDS: Record<CardId, CardDef> = {
   pierce: card({
     id: "pierce", name: "Pierce", glyph: "P", color: "#c05bff", kind: "modifier",
     desc: "Next shot passes through agents",
+  }),
+  heavy: card({
+    id: "heavy", name: "Heavy Round", glyph: "+1", color: "#c05bff", kind: "modifier",
+    desc: "Next shot +1 damage, slower",
   }),
   blink: card({
     id: "blink", name: "Blink", glyph: "→", color: "#5bd1ff", kind: "utility",
@@ -141,10 +133,11 @@ export interface CastMods {
   speedMult: number;
   bounces: number;
   pierce: boolean;
+  dmgAdd: number;
 }
 
 export function emptyCastMods(): CastMods {
-  return { count: 1, speedMult: 1, bounces: 0, pierce: false };
+  return { count: 1, speedMult: 1, bounces: 0, pierce: false, dmgAdd: 0 };
 }
 
 export function applyCastModifier(mods: CastMods, id: CardId): void {
@@ -160,6 +153,10 @@ export function applyCastModifier(mods: CastMods, id: CardId): void {
       break;
     case "pierce":
       mods.pierce = true;
+      break;
+    case "heavy":
+      mods.dmgAdd += 1;
+      mods.speedMult *= 0.75;
       break;
     default:
       break;

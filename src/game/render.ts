@@ -7,7 +7,7 @@ import { META_TRACKS, nextCost } from "./meta";
 import { MODS, type ModId } from "./mods";
 import { sectorDef } from "./sector";
 import type { GameState, RunState } from "./state";
-import { cellHash, MAT, SUB, type Substrate } from "./substrate";
+import { cellHash, MAT, type Substrate } from "./substrate";
 import {
   CARD_TILE,
   CONTINUE_RECT,
@@ -227,7 +227,7 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
   for (const can of sec.canisters) {
     const fused = can.fuse >= 0;
     const blink = fused && Math.floor(run.time * 16) % 2 === 0;
-    ctx.fillStyle = blink ? C.fireHot : C.canister;
+    ctx.fillStyle = blink ? C.blast : C.canister;
     ctx.fillRect(can.x - can.r * 0.7, can.y - can.r, can.r * 1.4, can.r * 2);
     ctx.strokeStyle = C.bg;
     ctx.lineWidth = 1.5;
@@ -290,24 +290,6 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
         ctx.stroke();
         break;
       }
-      case "igniter": {
-        const flick = 1 + 0.2 * Math.sin(run.time * 21 + hzd.id);
-        ctx.globalAlpha = 0.3;
-        fillCircle(ctx, hzd.x, hzd.y, hzd.r * 1.8 * flick, C.fire);
-        ctx.globalAlpha = 1;
-        fillCircle(ctx, hzd.x, hzd.y, hzd.r * flick, C.igniter);
-        fillCircle(ctx, hzd.x, hzd.y, hzd.r * 0.4, C.fireHot);
-        break;
-      }
-      case "corroder":
-        fillCircle(ctx, hzd.x, hzd.y, hzd.r, C.corroder);
-        fillCircle(ctx, hzd.x - 3, hzd.y - 2, 2.2, C.arena);
-        fillCircle(ctx, hzd.x + 3, hzd.y - 2, 2.2, C.arena);
-        break;
-    }
-    // Burning marker.
-    if ((hzd.kind === "drifter" || hzd.kind === "seeker" || hzd.kind === "corroder") && hzd.burn > 0) {
-      fillCircle(ctx, hzd.x, hzd.y - hzd.r - 4, 3 + Math.sin(run.time * 25) * 1.2, C.fireHot);
     }
   }
 
@@ -329,11 +311,6 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
   fillCircle(ctx, p.x, p.y, prad, C.player);
   fillCircle(ctx, p.x, p.y, prad * 0.45, C.playerCore);
   fillCircle(ctx, p.x + p.faceX * (prad + 4), p.y + p.faceY * (prad + 4), 2.5, C.playerCore);
-  if (p.wet > 0) strokeCircle(ctx, p.x, p.y, prad + 4, C.coolantLit, 1.5);
-  if (p.oiled > 0) strokeCircle(ctx, p.x, p.y, prad + 6.5, C.oilLit, 1.5);
-  if (p.burning > 0) {
-    fillCircle(ctx, p.x, p.y - prad - 6, 4 + Math.sin(run.time * 25) * 1.5, C.fireHot);
-  }
   ctx.globalAlpha = 1;
 
   ctx.restore();
@@ -354,47 +331,16 @@ function drawSubstrate(ctx: CanvasRenderingContext2D, sub: Substrate, run: RunSt
       if (m === MAT.empty) continue;
       const px = cx * c;
       const py = cy * c;
-      switch (m) {
-        case MAT.wall: {
-          // Deterministic per-cell shade so terrain reads textured.
-          const shade = cellHash(i, 3);
-          ctx.fillStyle = shade < 0.5 ? C.wall : C.wallEdge;
-          ctx.fillRect(px, py, c, c);
-          ctx.fillStyle = C.wall;
-          ctx.fillRect(px + 1, py + 1, c - 2, c - 2);
-          break;
-        }
-        case MAT.coolant:
-          ctx.fillStyle = cellHash(i, 5) < 0.3 ? C.coolantLit : C.coolant;
-          ctx.fillRect(px, py, c, c);
-          break;
-        case MAT.oil:
-          ctx.fillStyle = cellHash(i, 5) < 0.3 ? C.oilLit : C.oil;
-          ctx.fillRect(px, py, c, c);
-          break;
-        case MAT.acid: {
-          ctx.fillStyle = cellHash(i, sub.tick >> 3) < 0.4 ? C.acidLit : C.acid;
-          ctx.fillRect(px, py, c, c);
-          break;
-        }
-        case MAT.fire: {
-          const hot = cellHash(i, sub.tick) < 0.45;
-          ctx.fillStyle = hot ? C.fireHot : C.fire;
-          ctx.fillRect(px, py, c, c);
-          break;
-        }
-        case MAT.steam:
-          ctx.globalAlpha = 0.4 * Math.min(1, sub.fuel[i] / SUB.steamLife + 0.3);
-          ctx.fillStyle = C.steam;
-          ctx.fillRect(px - 2, py - 2, c + 4, c + 4);
-          ctx.globalAlpha = 1;
-          break;
-        case MAT.scorch:
-          ctx.fillStyle = C.scorch;
-          ctx.fillRect(px, py, c, c);
-          break;
-        default:
-          break;
+      if (m === MAT.wall) {
+        // Deterministic per-cell shade so terrain reads textured.
+        const shade = cellHash(i, 3);
+        ctx.fillStyle = shade < 0.5 ? C.wall : C.wallEdge;
+        ctx.fillRect(px, py, c, c);
+        ctx.fillStyle = C.wall;
+        ctx.fillRect(px + 1, py + 1, c - 2, c - 2);
+      } else if (m === MAT.rubble) {
+        ctx.fillStyle = C.rubble;
+        ctx.fillRect(px, py, c, c);
       }
     }
   }

@@ -15,10 +15,6 @@ export type ModId =
   | "magnet"
   | "phase"
   | "damper"
-  | "fireproof"
-  | "hydrojets"
-  | "slick"
-  | "corrosive"
   | "demolition";
 
 export interface ModDef {
@@ -37,10 +33,6 @@ export const MODS: Record<ModId, ModDef> = {
   magnet: { id: "magnet", name: "Magnet Coil", desc: "60% wider pickup radius" },
   phase: { id: "phase", name: "Phase Skin", desc: "50% longer hit protection" },
   damper: { id: "damper", name: "Inertial Damper", desc: "Sharper handling" },
-  fireproof: { id: "fireproof", name: "Fireproof Plating", desc: "Fire cannot ignite you" },
-  hydrojets: { id: "hydrojets", name: "Hydro Jets", desc: "Coolant no longer slows you" },
-  slick: { id: "slick", name: "Slick Coating", desc: "Oil no longer ruins handling" },
-  corrosive: { id: "corrosive", name: "Corrosive Wake", desc: "Dashing leaves an acid trail" },
   demolition: { id: "demolition", name: "Demolition Sync", desc: "Explosions can't hurt you" },
 };
 
@@ -51,10 +43,6 @@ export function rollDraft(rng: Rng, run: RunState): ModId[] {
     if (id === "twincap") return s.dashCharges < config.dash.chargeCap;
     if (id === "plating") return run.maxIntegrity < config.player.integrityCap;
     if (id === "nanite") return run.integrity < run.maxIntegrity;
-    if (id === "fireproof") return !s.fireproof;
-    if (id === "hydrojets") return !s.hydroJets;
-    if (id === "slick") return !s.slickCoating;
-    if (id === "corrosive") return !s.corrosiveWake;
     if (id === "demolition") return !s.demolition;
     return true;
   });
@@ -94,18 +82,6 @@ export function applyMod(run: RunState, id: ModId): void {
     case "damper":
       s.accel *= 1.25;
       s.drag *= 1.35;
-      break;
-    case "fireproof":
-      s.fireproof = true;
-      break;
-    case "hydrojets":
-      s.hydroJets = true;
-      break;
-    case "slick":
-      s.slickCoating = true;
-      break;
-    case "corrosive":
-      s.corrosiveWake = true;
       break;
     case "demolition":
       s.demolition = true;
