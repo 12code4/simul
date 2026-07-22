@@ -1,7 +1,7 @@
 {
   "name": "simul",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.3.0",
   "type": "module",
   "description": "A game project (working title: simul).",
   "scripts": {

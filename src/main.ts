@@ -19,7 +19,7 @@ if (!ctx) {
   throw new Error("Could not get a 2D rendering context");
 }
 
-const input = createInput(window);
+const input = createInput(canvas);
 const state = createInitialState();
 const handle: LoopHandle = startLoop(ctx, state, input);
 

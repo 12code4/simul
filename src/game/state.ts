@@ -8,6 +8,7 @@ import { createRng, type Rng } from "./rng";
 import { loadMeta, type MetaState } from "./meta";
 import { generateSector, type SectorState } from "./sector";
 import type { ModId } from "./mods";
+import { createStarterCaster, type CardId, type Caster } from "./cards";
 
 export type Phase = "title" | "playing" | "draft" | "paused" | "gameover" | "victory";
 
@@ -21,6 +22,12 @@ export interface RunStats {
   dashDuration: number;
   pickupRadius: number;
   iframeMult: number;
+  // Substrate-interaction mods.
+  fireproof: boolean;
+  hydroJets: boolean;
+  slickCoating: boolean;
+  corrosiveWake: boolean;
+  demolition: boolean;
 }
 
 export interface PlayerState {
@@ -36,6 +43,13 @@ export interface PlayerState {
   charges: number;
   recharge: number;
   iframes: number;
+  // Status timers (0 = inactive). Burning counts DOWN from burnDuration and
+  // deals its damage when crossing burnDamageAt — extinguish in coolant first.
+  burning: number;
+  wet: number;
+  oiled: number;
+  /** Time until the next acid damage tick while standing in acid. */
+  acidTimer: number;
 }
 
 export interface Particle {
@@ -54,6 +68,7 @@ export interface Outcome {
   banked: number;
   sectorReached: number;
   time: number;
+  kills: number;
 }
 
 export interface RunState {
@@ -63,7 +78,13 @@ export interface RunState {
   integrity: number;
   maxIntegrity: number;
   flux: number;
+  /** Hazards destroyed this run (cards, fire, explosions, coolant). */
+  kills: number;
   mods: ModId[];
+  /** The player's deck. */
+  caster: Caster;
+  /** Unequipped cards, edited into the caster between sectors. */
+  inventory: CardId[];
   stats: RunStats;
   player: PlayerState;
   sector: SectorState;
@@ -75,15 +96,47 @@ export interface RunState {
   time: number;
 }
 
+/** Dev/testing hooks read from the URL (?seed=hex&sector=1-5). */
+export interface DevParams {
+  seed: number | null;
+  sector: number | null;
+}
+
+/** Selection state for the between-sector deck editor (click-click swaps). */
+export interface EditSelection {
+  zone: "slot" | "inv";
+  index: number;
+}
+
 export interface GameState {
   phase: Phase;
   meta: MetaState;
   run: RunState | null;
   draftOptions: ModId[] | null;
   menuIndex: number;
+  /** Mod picked on the sector-clear screen; applied on continue. */
+  chosenMod: number | null;
+  editSel: EditSelection | null;
   outcome: Outcome | null;
   /** Wall-clock-ish UI time for menu pulses; advances every update. */
   uiTime: number;
+  dev: DevParams;
+}
+
+function readDevParams(): DevParams {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const seedRaw = params.get("seed");
+    const sectorRaw = params.get("sector");
+    const seed = seedRaw !== null ? Number.parseInt(seedRaw, 16) : NaN;
+    const sector = sectorRaw !== null ? Number.parseInt(sectorRaw, 10) : NaN;
+    return {
+      seed: Number.isFinite(seed) ? seed >>> 0 : null,
+      sector: Number.isFinite(sector) ? Math.min(5, Math.max(1, sector)) : null,
+    };
+  } catch {
+    return { seed: null, sector: null };
+  }
 }
 
 export function createInitialState(): GameState {
@@ -93,8 +146,11 @@ export function createInitialState(): GameState {
     run: null,
     draftOptions: null,
     menuIndex: 0,
+    chosenMod: null,
+    editSel: null,
     outcome: null,
     uiTime: 0,
+    dev: readDevParams(),
   };
 }
 
@@ -112,6 +168,11 @@ export function computeRunStats(meta: MetaState): RunStats {
     dashDuration: config.dash.duration,
     pickupRadius: config.player.pickupRadius,
     iframeMult: 1,
+    fireproof: false,
+    hydroJets: false,
+    slickCoating: false,
+    corrosiveWake: false,
+    demolition: false,
   };
 }
 
@@ -129,6 +190,10 @@ function makePlayer(sector: SectorState, stats: RunStats): PlayerState {
     charges: stats.dashCharges,
     recharge: 0,
     iframes: 1.2, // spawn grace so nothing cheap-shots a fresh sector
+    burning: 0,
+    wet: 0,
+    oiled: 0,
+    acidTimer: 0,
   };
 }
 
@@ -147,7 +212,10 @@ export function createRun(meta: MetaState, seed: number): RunState {
     integrity: maxIntegrity,
     maxIntegrity,
     flux: 0,
+    kills: 0,
     mods: [],
+    caster: createStarterCaster(),
+    inventory: [],
     stats,
     player: makePlayer(sector, stats),
     sector,

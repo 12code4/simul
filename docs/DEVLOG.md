@@ -8,6 +8,44 @@ material for devlogs or social posts later.
 
 ---
 
+## 2026-07-21 — v0.3 "Substrate & Casters": the Noita-inspired big update
+
+- **Direction change, and a good one:** the original plan for this update was a
+  materials-only layer with movement staying the only verb. Mid-build, the project
+  direction (from the human side of this collaboration) pivoted it bigger: open
+  sandbox sectors, the player fights back, and the weapon system borrows Noita's
+  internal card/deck architecture outright. Pillar #1 revised from "movement is the
+  only verb" to "movement is king" — recorded in the GDD.
+- **The substrate:** every sector floor is now a 16px material cell grid run as a
+  cellular automaton at 10 Hz — coolant, oil, fire, acid, steam, scorch, and walls
+  *as cells*, so terrain is destructible (acid erodes it, explosions carve it; the
+  arena border ring is exempt so the world stays sealed). Fire spreads across oil,
+  coolant quenches to steam (which blinds seekers), and every status applies to
+  hazards too — kiting a seeker through fire kills it. Burning agents drip fire.
+- **The Caster:** a deck of 5 ordered card slots; casting walks the deck from a
+  pointer, folds modifier cards (Twin/Haste/Ricochet/Pierce) into the next payload
+  (Bolt/Burst/Firebolt/Waterball/Acid Spit/Oil Slick/Blink), and recharges on wrap.
+  Material payloads splash their material into the substrate — fire cards into oil
+  fields is the whole point. Cards are found in the world (some sealed in
+  destructible caches); the deck is edited between sectors, holy-mountain style.
+- Enemies got HP + flux drops; canisters explode/chain/carve; two new agents
+  (Igniter, Corroder) actively rewrite the floor; sectors grew ~40% and opened up;
+  mouse aim (twin-stick) replaced keyboard-only; edge arrows point offscreen.
+- **Technical decisions:**
+  - CA + cosmetics use position/tick hashes, never `RunState.rng` — material chaos
+    can't perturb procedural generation, runs stay seed-reproducible.
+  - Grid arrays are plain `number[]` (not typed arrays) to keep the state tree
+    JSON-serializable per our own rules.
+  - Projectiles substep at ≤8px per collision check so Haste stacks can't tunnel
+    through single-cell walls (caught in self-review before ship).
+  - Shared UI geometry lives in `ui.ts` so mouse hit-testing and rendering can't
+    drift apart.
+  - Dev hooks: `?seed=<hex>&sector=<1-5>` for reproducible testing of any sector.
+- Verified in headless Chromium: casting, fire-trail emergence in the Fuel Depot,
+  kills, and a 30-action mouse+keyboard soak — zero runtime errors.
+- **Next:** playtest the economy (card density, HP, heat), then audio. Trigger
+  cards are the next big caster feature (see GDD open questions).
+
 ## 2026-07-21 — First playable: the full roguelite loop
 
 - `simul` is now an actual game: a keyboard-only **movement roguelite**. Five procedural
