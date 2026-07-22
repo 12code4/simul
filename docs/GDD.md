@@ -3,160 +3,137 @@
 > Living document. This is the source of truth for *what* we're building and *why*.
 > Update it when a mechanic or scope firms up.
 
-_Last updated: 2026-07-21 · Status: **v2 concept — "Substrate & Casters" (Noita-inspired) shipped as first playable v0.3**_
+_Last updated: 2026-07-22 · Status: **v3 concept — "The Caster" focus (v0.4). Material/liquid simulation removed by design.**_
 
 ---
 
 ## 1. One-line pitch
 
-A sandbox roguelite in a simulated world: pilot a fragile probe through five big open
-sectors where fire spreads across oil, acid melts the walls, and your weapon is a
-deck of cards — harvest data shards, build your caster, and let the simulation fight
-for you.
+A sandbox roguelite about movement and deck-building: dash a fragile probe through
+five big open sectors, harvesting data shards and cards while your Caster — an
+ordered deck cast Noita-wand style — does the fighting.
 
 ## 2. Concept & fantasy
 
-You are a probe inside a hostile simulation. The world runs on simple material rules —
-fire ignites oil, coolant quenches fire into steam, acid dissolves terrain — and
-**everything obeys them equally**: you, the hazards, and the level itself. Your defense
-is movement (thrust + an invulnerable dash). Your offense is a **Caster**: a deck of
-found cards cast in order, Noita-wand style. The fantasy: mastering a chaotic but fair
-physical system — turning its own rules into your weapon.
+You are a probe inside a hostile simulation. Your defense is movement — thrust and an
+invulnerable dash. Your offense is a **Caster**: a deck of found cards cast in order,
+where modifier cards wrap the shots that follow them. The fantasy is *building a
+machine*: every card you find and every slot you reorder changes how your weapon
+behaves, and mastery means piloting hard while your deck design pays off.
 
-Runs are 8–15 minutes. Death banks your flux — every run makes the next stronger.
+The card/deck system is the core system of the game and the platform for future
+features (triggers, multi-deck builds, deck-defined movement). Runs are 8–15 minutes.
+Death banks your flux — every run makes the next stronger.
 
 ## 3. Design pillars
 
 1. **Movement is king.** The dash and momentum kit is the heart of survival. Casting
    never roots you; no mechanic may make standing still optimal.
-   *(Revised in v0.3: was "movement is the only verb" — combat was added by design
-   direction, but movement remains the primary skill.)*
-2. **Systems, not scripts.** Hazards are autonomous agents; materials follow cellular
-   rules; difficulty is density and interaction, never choreography. If a feature can
-   be expressed as a simulation rule instead of a special case, it must be.
-3. **One set of rules for everyone.** Fire burns hazards too. Explosions carve terrain
-   for anyone. The player's strongest plays come from turning the world's rules against
-   its agents.
+2. **The deck is the build.** Player power and expression flow through cards and deck
+   order, not stat sticks. New features should be new cards or new deck rules first.
+3. **Systems, not scripts.** Hazards are autonomous agents; difficulty is density and
+   interaction, never choreography.
 4. **Death is progress.** Flux always banks into permanent cores.
 5. **Always readable.** Telegraphs (pulsar arcs, canister fuses, sweeper tracks),
    color-as-information, edge arrows to objectives. You can always see why you died.
 
+*(History: v0.3 added a liquid/material cellular automaton — fire/oil/coolant/acid.
+It was **removed in v0.4 by creative direction**: it competed with the deck for the
+game's identity. Destructible terrain and explosions stayed; liquids did not. See
+DEVLOG 2026-07-22.)*
+
 ## 4. Core loop
 
-**Seconds:** scan → route → weave/dash → cast into the environment (ignite the oil the
-seeker is crossing) → grab a shard or card → heat rises → repeat → gate.
+**Seconds:** scan → route → weave/dash → cast → grab a shard or card → crack a cache
+open with a canister → heat rises → gate.
 
-**Minutes (per run):** clear sector → draft a mod + edit your deck → bigger, wilder
+**Minutes (per run):** clear sector → draft a mod + rebuild your deck → bigger, harder
 sector → win at sector 5 or die trying.
 
-**Hours (meta):** bank flux → permanent upgrades → deeper, faster, cleaner; hunt better
-deck builds from world drops.
+**Hours (meta):** bank flux → permanent upgrades → chase better deck builds and
+cleaner clears.
 
 ## 5. Mechanics & systems
 
-### The substrate (the Noita-inspired layer)
-Every sector floor is a 16px material grid simulated as a cellular automaton (10 Hz):
-
-| Material | Effect on entities | Interactions |
-|---|---|---|
-| Coolant | Slows; makes you **wet** (fireproof 4s); extinguishes burning | Quenches adjacent fire → steam |
-| Oil | Slippery (weak thrust/brakes); makes you **oiled** | Fire spreads across it cell-to-cell |
-| Fire | Ignites the unprotected → **burning** | Burns out to scorch; beaten by coolant |
-| Acid | Damage tick while standing in it | **Dissolves wall cells** — terrain is destructible |
-| Steam | Breaks seeker tracking | Fades in ~3s |
-| Walls | Solid terrain — lives IN the grid | Carved by acid and explosions (border ring is indestructible) |
-
-**Statuses apply to hazards too**: drifters/seekers/corroders ignite, burn for 1.2s,
-and die — kiting enemies through fire is real offense. Burning agents drip fire onto
-oil they cross. Coolant slows them just like you.
-
-### The Caster (card/deck weapon system)
-Noita's wand system is internally a card/deck architecture — ours is explicitly that:
-
-- **Caster = deck**: 5 ordered slots, a cast delay (~0.26s), and a recharge (~0.9s)
-  when the deck pointer wraps.
+### The Caster (the core system)
+- **Caster = deck**: 5 ordered slots, cast delay ~0.26s (+ per-card), recharge ~0.9s
+  when the deck pointer wraps. Deck order = cast order.
 - **Cast = deck walk**: each trigger pull reads from the pointer; **modifier cards
-  fold into the next payload** (Twin, Haste, Ricochet, Pierce), which then fires.
-- **Payload cards**: Bolt, Burst (3 pellets), Firebolt, Waterball, Acid Spit,
-  Oil Slick — material payloads splash their material into the substrate on impact.
-  **Blink** (utility) teleports toward the aim.
-- **Acquisition**: cards are **found in the world** — floating card nodes, plus
-  **caches** sealed inside destructible wall rings (acid, canisters, or Corrosive
-  Wake crack them). Deck editing happens **between sectors** (holy-mountain style).
-- Starting deck: a single Bolt. Everything else is found.
+  fold into the next payload**, which then fires. Modifiers stack.
+- **Payloads**: Bolt (starter), Burst (3-pellet fan), Slug (3 dmg, slow), Seeker
+  Dart (homing). **Utility**: Blink (teleport toward aim, wall-blocked, brief
+  i-frames). **Modifiers**: Twin Cast (×2), Haste (×1.6 speed), Ricochet (+2 wall
+  bounces), Pierce (through agents), Heavy Round (+1 dmg, slower).
+- **Acquisition**: cards are found in the world — open nodes, plus **caches** sealed
+  in destructible wall rings. *Every cache spawns with a canister beside it* — the
+  key is always in the lock. Deck editing happens between sectors.
+- Projectiles substep (≤8px/check) so hasted shots can't tunnel through walls.
 
-### Enemies, props, objective
-- All hazards have HP and can be destroyed by cards, fire, coolant (igniters), or
-  explosions; kills drop flux where the agent died.
-- Bestiary: Drifter (2hp, bounces), Seeker (2hp, hunts, blinded by steam, mushy in
-  oil), Sweeper (3hp, patrols), Pulsar (3hp, ring emitter — now snipeable), **Igniter**
-  (1hp, fire trail, dies instantly in coolant), **Corroder** (2hp, acid trail that
-  eats the level, ruptures into acid on death).
-- **Canisters** explode (carve terrain, ignite, chain) when shot, cooked by fire, or
-  triggered by a dashing (invulnerable) player.
-- Objective per sector: collect all shards → gate opens → touch it. Heat still spawns
-  extra drifters over time; edge arrows point to offscreen objectives.
-- 5 sectors, big and open (1800×1300 → 2600×1800), each with a material identity:
-  **Calibration Field → Coolant Basin → Fuel Depot → Corrosion Works → Crucible**.
+### World & objective
+- **Destructible terrain**: walls live in a cell grid; canister explosions carve it
+  (chain reactions, rubble stains). Trigger canisters by shooting them or dash-touching
+  them (you're invulnerable while dashing — it's a tool, not a trap).
+- Objective per sector: collect all shards → gate opens → touch it. Heat spawns extra
+  drifters over time; edge arrows point to offscreen objectives.
+- 5 sectors, big and open (1800×1300 → 2600×1800): **Calibration Field → Relay Grid →
+  Shatter Yard → Sentinel Works → Terminus.** Identity comes from hazard mix and
+  canister/cache density.
+
+### Enemies
+All hazards have HP, die to cards and explosions, and drop flux where they die.
+Bestiary: Drifter (2hp, bounces), Seeker (2hp, hunts; slower than you; walls are
+cover), Sweeper (3hp, patrols a visible track), Pulsar (3hp, telegraphed expanding
+rings — snipeable).
 
 ### Player kit & progression
-- Thrust + dash (2 charges, i-frames) unchanged; 3 base integrity, cap 6.
-- Mod draft (1 of 3) after each sector — now includes material mods: Fireproof
-  Plating, Hydro Jets, Slick Coating, **Corrosive Wake** (dash leaves acid),
-  Demolition Sync (explosion-immune).
-- Meta shop unchanged: Reinforced Hull / Tuned Thrusters / Capacitor Bank via cores.
+- Thrust + dash (2 charges, full i-frames); 3 base integrity, cap 6.
+- Mod draft (1 of 3) after each sector — 10 mods (movement/survival + Demolition
+  Sync for explosion immunity).
+- Meta shop: Reinforced Hull / Tuned Thrusters / Capacitor Bank, bought with cores.
 
 ### Determinism
-Fixed 60 Hz step. World generation flows from the seeded run RNG (seed in HUD; dev
-hooks `?seed=<hex>&sector=<1-5>`). The material CA and cosmetics use position/tick
-hashes instead of the run RNG, so chaos never perturbs generation.
+Fixed 60 Hz step; world generation flows from the seeded run RNG (seed in HUD; dev
+hooks `?seed=<hex>&sector=<1-5>`). Cosmetic variation uses position hashes, never the
+run RNG.
 
 ## 6. Controls & input
 
 | Input | Action |
 |---|---|
 | WASD / arrows | Thrust |
-| **Mouse** | **Aim; hold left button to cast** |
+| Mouse | Aim; hold left button to cast |
 | Space or Shift | Dash (invulnerable) |
 | Esc | Pause / resume |
 | Enter | Confirm / start / retry / continue |
-| 1–3 | Buy upgrade (title) / pick draft mod |
-| Click | Pick mods; deck editing (card → destination) |
+| 1–3 / click | Buy upgrades, pick draft mods, edit the deck |
 | Q (paused) | Abandon run (flux still banks) |
-
-*(v0.3: mouse aim replaced keyboard-only input — a deliberate pillar revision for the
-sandbox direction.)*
 
 ## 7. Progression & goals
 
 Win: clear sector 5. Lose: integrity 0. Both bank flux. Difficulty scales via the
-sector table in `config.ts` (arena size, agent counts/types, material pools, heat).
-Stats tracked: runs, wins, best sector, lifetime flux, kills per run.
+sector table in `config.ts`. Stats: runs, wins, best sector, lifetime flux, kills.
 
 ## 8. Look & feel
 
-"Clinical neon lab, now with weather." Dark grid arenas; chunky 16px material cells
-with deterministic texture; fire flickers, steam drifts, scorch stains persist — the
-floor is a record of the run. Color is information: blue player/coolant family, gold
-objectives, green currency/acid family (distinct shades), warm hazards, purple
-modifiers. No audio yet — top post-v0.3 priority.
+"Clinical neon lab." Dark grid arenas, chunky destructible cell walls with
+deterministic texture, rubble scars where explosions landed, glowing card tiles,
+particle bursts for every event. Color is information: blue player, gold objective/
+Slug, green currency/Dart, warm hazards/canisters, purple modifiers. No audio yet.
 
 ## 9. Scope — shipped vs. later
 
-**Shipped in v0.3 ("Substrate & Casters"):**
-- Material CA + destructible terrain + statuses for everyone
-- Card/deck caster, 11 cards, world drops + caches, between-sector deck editor
-- Enemy HP/kills/flux drops, canisters, Igniter + Corroder, 5 biome-flavored
-  open sectors, mouse aim, edge arrows, 5 new mods
+**Shipped (v0.4, "The Caster"):**
+- Card/deck caster with 10 cards incl. homing and damage-modifier archetypes
+- World card drops + canister-keyed caches, between-sector deck editing
+- Destructible terrain via explosions; chaining canisters
+- Enemy HP/kills/flux drops; 5 big open sectors; mouse aim; edge arrows
 
-**Later:**
-- **Audio** (SFX + music) — biggest missing juice
-- Trigger cards (cast-on-impact payloads — the deepest Noita combo mechanic)
-- More materials (lava? conductive shock?), more agents, boss-sector twist
-- Minimap or zoom-out pulse; gamepad; remappable keys; accessibility pass
-  (reduced flash, colorblind-safe audit)
-- Daily seed, run history, speedrun timer
-- Balance pass from real playtesting (economy: card density, HP curves, heat)
+**Later (deck-first roadmap):**
+- **Trigger cards** — payloads that cast another card on impact (nested casts);
+  the deepest Noita mechanic and our next big feature
+- More card archetypes: multicast fans, orbitals, delayed/echo casts, deck-cycling
+  utilities; possibly caster stats as findable upgrades (slots, cast delay)
+- Audio (SFX + music); gamepad; accessibility pass; daily seed; balance from playtests
 
 ## 10. Target & platform
 
@@ -164,7 +141,9 @@ Desktop browser, keyboard + mouse. Static Vite build on GitHub Pages.
 
 ## 11. Open questions
 
-- Is starter-deck-[Bolt] too thin for sector 1, or a clean teaching moment?
-- Should caches guarantee a nearby tool (canister within N px), or is scarcity fun?
-- Do modifier stacks need caps (Twin×Twin×Burst = 12 pellets)?
-- When do trigger cards land, and do they need a mana-like constraint?
+- Do modifier stacks need caps (Twin+Twin+Burst = 12 pellets)?
+- Should caster stats (slot count, cast delay) be upgradeable, and where — drafts,
+  meta shop, or found "caster frames"?
+- Is Slug's 0.22s delay add enough cost for 3 damage?
+- When trigger cards land, do they need a resource constraint (mana-like) or is
+  cast/recharge tempo enough?

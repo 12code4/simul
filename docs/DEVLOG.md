@@ -8,6 +8,33 @@ material for devlogs or social posts later.
 
 ---
 
+## 2026-07-22 — v0.4 "The Caster": materials cut, deck doubled down
+
+- **Creative direction call (from the human side): the liquid/material layer didn't
+  land.** Fire, oil, coolant, acid, steam — all removed, one day after shipping.
+  The lesson worth recording: the substrate was technically satisfying but it
+  competed with the card system for the game's identity, and split the player's
+  attention across two rule systems. One deep system beats two shallow-ish ones.
+  The card/deck system is now the explicit core, and future features build on it.
+- **Kept from v0.3** (not liquids, and they serve the deck): destructible cell-grid
+  terrain, explosive canisters (shoot or dash-trigger; they chain and carve), card
+  world-drops and caches, mouse aim, big open sectors, enemy HP/kills/flux drops.
+- **Deck deepened to fill the gap** — the card pool is 10, all kinetic/energy:
+  - New payloads: **Slug** (3 dmg, slow, +0.22s delay) and **Seeker Dart** (homing —
+    steers toward the nearest agent, turn-rate limited).
+  - New modifier: **Heavy Round** (+1 dmg, ×0.75 speed) — first damage modifier.
+  - Removed: Firebolt, Waterball, Acid Spit, Oil Slick, and the four material mods
+    (Fireproof/Hydro Jets/Slick Coating/Corrosive Wake). Demolition Sync stays.
+- **Cache fix that matters:** every cache now generates with a canister placed just
+  outside its wall ring — the key is always in the lock, no tool-luck required.
+- Biomes renamed (no liquid flavor): Calibration Field, Relay Grid, Shatter Yard,
+  Sentinel Works, Terminus. Substrate.ts shrank to a static-but-destructible
+  terrain grid (no CA, no per-cell fuel); bundle dropped 50 → 42 kB.
+- Verified in headless Chromium: casting/soak with zero errors; death-screen flow
+  incidentally confirmed when the input-mashing bot died in Shatter Yard in 11s.
+- **Next:** trigger cards (cast-on-impact) as the first build-on-the-deck feature;
+  balance pass from real playtests; audio.
+
 ## 2026-07-21 — v0.3 "Substrate & Casters": the Noita-inspired big update
 
 - **Direction change, and a good one:** the original plan for this update was a

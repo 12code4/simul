@@ -9,6 +9,30 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.4.0] - 2026-07-22 — "The Caster"
+
+A focus redesign one day after 0.3.0: the material/liquid simulation was removed by
+creative direction, and the card/deck system is now the explicit core of the game.
+
+### Added
+- New payload cards: **Slug** (3 damage, slow) and **Seeker Dart** (homing).
+- New modifier card: **Heavy Round** (+1 damage, slower shot).
+- Every card cache now generates with a canister beside it — the key is always
+  in the lock.
+
+### Changed
+- Sector biomes renamed and re-identified around hazard/canister density:
+  Calibration Field, Relay Grid, Shatter Yard, Sentinel Works, Terminus.
+- Terrain remains destructible (explosions carve wall cells, leaving rubble),
+  but is now static — no cellular automaton.
+
+### Removed
+- All materials/liquids: fire, oil, coolant, acid, steam, and their statuses
+  (burning/wet/oiled), spread/quench/dissolve rules, and seeker-blinding steam.
+- Material payload cards (Firebolt, Waterball, Acid Spit, Oil Slick) and
+  material mods (Fireproof Plating, Hydro Jets, Slick Coating, Corrosive Wake).
+- Material agents: Igniter and Corroder.
+
 ## [0.3.0] - 2026-07-21 — "Substrate & Casters"
 
 The Noita-inspired big update. (There is no 0.2.0 — the materials-only update was

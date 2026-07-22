@@ -6,12 +6,12 @@ changes.
 ## What this project is
 
 `simul` is a browser game built with TypeScript + Vite: a sandbox roguelite (5 big
-procedural sectors per run) on top of a simulated material world — a cellular-automaton
-"substrate" where fire spreads on oil, acid dissolves terrain, and statuses apply to
-player and hazards alike — with a Noita-style card/deck weapon system (the "Caster"),
-dash i-frames, draft mods, and meta-progression. The design source of truth is
-`docs/GDD.md` — when in doubt about *what* to build or whether a feature fits, check
-the GDD's pillars.
+procedural sectors per run) whose core system is a Noita-style card/deck weapon (the
+"Caster": ordered slots, modifier cards fold into the next payload, recharge on deck
+wrap), plus dash i-frames, destructible terrain, draft mods, and meta-progression.
+New features should build on the deck system first (GDD pillar #2). The design source
+of truth is `docs/GDD.md` — when in doubt about *what* to build or whether a feature
+fits, check the GDD's pillars.
 
 ## How to run
 
@@ -39,8 +39,8 @@ stabilize.
     casting, projectiles, statuses, canisters, deck editing). Mutates state.
   - `render.ts` — draws state to canvas. Must stay read-only w.r.t. state (cosmetics
     like particles/shake are *state*, updated in `update.ts`).
-  - `substrate.ts` — the material cell grid + CA (16px cells, 10 Hz tick). Walls are
-    cells → terrain is destructible; the arena border ring is exempt. Arrays are plain
+  - `substrate.ts` — the terrain cell grid (16px cells). Walls are cells → terrain is
+    destructible by explosions; the arena border ring is exempt. Arrays are plain
     `number[]` on purpose (state must stay JSON-serializable).
   - `cards.ts` — card/deck data (payloads, modifiers, the Caster shape). Casting
     *logic* lives in `update.ts`; this module stays declarative.
@@ -52,10 +52,9 @@ stabilize.
     presses/clicks). `mods.ts` — draft mods.
     `meta.ts` — persistent progression, localStorage key `simul.save.v1`.
 - **Determinism:** all in-run randomness flows through `RunState.rng` (seeded
-  mulberry32); `Math.random` is only for picking new-run seeds. The substrate CA and
-  cosmetics use position/tick hashes (`cellHash`) instead of the run RNG so material
-  chaos never perturbs generation. Dev hooks `?seed=<hex>&sector=<1-5>` pin runs for
-  reproducible testing.
+  mulberry32); `Math.random` is only for picking new-run seeds. Cosmetic variation
+  uses position hashes (`cellHash`) instead of the run RNG. Dev hooks
+  `?seed=<hex>&sector=<1-5>` pin runs for reproducible testing.
 - **Fast projectiles must substep** (≤8px per collision check) or they tunnel through
   single-cell walls — see `updateProjectiles`.
 - **TypeScript is strict.** No `any` without a written reason. Prefer small pure functions.
