@@ -2,14 +2,26 @@
 // a phase machine (title/playing/draft/paused/end screens) plus the gameplay
 // step itself. Mutates state; never draws.
 
+import { applyCastModifier, CARDS, emptyCastMods, type CardId } from "./cards";
 import { config } from "./config";
 import type { Input } from "./input";
 import { buyUpgrade, META_TRACKS, saveMeta } from "./meta";
-import { applyMod, rollDraft } from "./mods";
-import { clamp, dist, resolveCircleRect } from "./physics";
+import { applyMod, rollDraft, type ModId } from "./mods";
+import { clamp, dist } from "./physics";
 import { range, rangeInt } from "./rng";
-import { sectorDef, type SectorState } from "./sector";
+import { sectorDef, type Hazard, type SectorState } from "./sector";
 import { createRun, enterSector, type GameState, type RunState } from "./state";
+import {
+  detonate,
+  igniteAt,
+  MAT,
+  matAt,
+  resolveCircleSubstrate,
+  spillAcidAt,
+  splashMaterial,
+  stepSubstrate,
+} from "./substrate";
+import { CONTINUE_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect } from "./ui";
 
 export function update(state: GameState, input: Input, dt: number): void {
   state.uiTime += dt;
@@ -36,14 +48,20 @@ export function update(state: GameState, input: Input, dt: number): void {
 // --- run lifecycle ---------------------------------------------------------
 
 function startRun(state: GameState): void {
-  // The only nondeterminism in the game: choosing a fresh seed.
-  const seed = (Math.random() * 0xffffffff) >>> 0;
+  // The only nondeterminism in the game: choosing a fresh seed. Dev hooks
+  // (?seed=hex&sector=n) pin it for reproducible testing.
+  const seed = state.dev.seed ?? (Math.random() * 0xffffffff) >>> 0;
   state.meta.runs += 1;
   saveMeta(state.meta);
   state.run = createRun(state.meta, seed);
+  if (state.dev.sector !== null && state.dev.sector > 1) {
+    enterSector(state.run, state.dev.sector - 1);
+  }
   state.draftOptions = null;
   state.outcome = null;
   state.menuIndex = 0;
+  state.chosenMod = null;
+  state.editSel = null;
   state.phase = "playing";
 }
 
@@ -63,11 +81,13 @@ function clearSector(state: GameState, run: RunState): void {
   run.flux += config.flux.sectorClear;
   if (run.sectorIndex >= config.sectors.length - 1) {
     const banked = bank(state, run, true);
-    state.outcome = { won: true, banked, sectorReached: config.sectors.length, time: run.time };
+    state.outcome = { won: true, banked, sectorReached: config.sectors.length, time: run.time, kills: run.kills };
     state.phase = "victory";
   } else {
     state.draftOptions = rollDraft(run.rng, run);
     state.menuIndex = 0;
+    state.chosenMod = null;
+    state.editSel = null;
     state.phase = "draft";
   }
 }
@@ -95,6 +115,10 @@ function updatePaused(state: GameState, input: Input): void {
   }
 }
 
+/**
+ * The sector-clear screen: pick one mod (required), optionally rearrange the
+ * caster deck (click a card, click a destination), then continue.
+ */
 function updateDraft(state: GameState, input: Input, dt: number): void {
   const opts = state.draftOptions;
   const run = state.run;
@@ -104,25 +128,120 @@ function updateDraft(state: GameState, input: Input, dt: number): void {
   }
   tickCosmetics(run, dt);
 
+  // Keyboard: digits pick a mod, arrows move the highlight, Enter continues.
   if (input.takePress("ArrowLeft") || input.takePress("KeyA")) {
     state.menuIndex = (state.menuIndex + opts.length - 1) % opts.length;
   }
   if (input.takePress("ArrowRight") || input.takePress("KeyD")) {
     state.menuIndex = (state.menuIndex + 1) % opts.length;
   }
-
-  let choice = -1;
   for (let i = 0; i < opts.length; i++) {
-    if (input.takePress(`Digit${i + 1}`)) choice = i;
+    if (input.takePress(`Digit${i + 1}`)) {
+      state.chosenMod = i;
+      state.menuIndex = i;
+    }
   }
-  if (input.takePress("Enter") || input.takePress("Space")) choice = state.menuIndex;
 
-  if (choice >= 0 && choice < opts.length) {
-    applyMod(run, opts[choice]);
-    state.draftOptions = null;
-    enterSector(run, run.sectorIndex + 1);
-    state.phase = "playing";
+  if (input.takeClick()) {
+    handleDraftClick(state, run, opts, input.mouse().x, input.mouse().y);
+    if (state.phase !== "draft") return; // continue button advanced the run
   }
+
+  const confirm = input.takePress("Enter") || input.takePress("Space");
+  if (confirm) {
+    if (state.chosenMod === null) state.chosenMod = state.menuIndex;
+    advanceFromDraft(state, run, opts[state.chosenMod]);
+  }
+}
+
+function advanceFromDraft(state: GameState, run: RunState, mod: ModId): void {
+  applyMod(run, mod);
+  state.draftOptions = null;
+  state.chosenMod = null;
+  state.editSel = null;
+  enterSector(run, run.sectorIndex + 1);
+  state.phase = "playing";
+}
+
+function handleDraftClick(
+  state: GameState,
+  run: RunState,
+  opts: ModId[],
+  mx: number,
+  my: number,
+): void {
+  // Mod cards.
+  for (let i = 0; i < opts.length; i++) {
+    if (inRect(mx, my, draftCardRect(i, opts.length))) {
+      state.chosenMod = i;
+      state.menuIndex = i;
+      return;
+    }
+  }
+  if (inRect(mx, my, CONTINUE_RECT) && state.chosenMod !== null) {
+    advanceFromDraft(state, run, opts[state.chosenMod]);
+    return;
+  }
+  // Deck slots.
+  const caster = run.caster;
+  for (let i = 0; i < caster.slots.length; i++) {
+    if (inRect(mx, my, deckSlotRect(i, caster.slots.length))) {
+      clickDeckSlot(state, run, i);
+      return;
+    }
+  }
+  // Inventory tiles (one extra tile acts as the unequip target).
+  for (let i = 0; i <= run.inventory.length; i++) {
+    if (inRect(mx, my, inventoryRect(i))) {
+      clickInventory(state, run, i);
+      return;
+    }
+  }
+  state.editSel = null;
+}
+
+function clickDeckSlot(state: GameState, run: RunState, i: number): void {
+  const sel = state.editSel;
+  const slots = run.caster.slots;
+  if (sel === null) {
+    if (slots[i] !== null) state.editSel = { zone: "slot", index: i };
+    return;
+  }
+  if (sel.zone === "slot") {
+    if (sel.index !== i) {
+      const tmp = slots[sel.index];
+      slots[sel.index] = slots[i];
+      slots[i] = tmp;
+    }
+    state.editSel = null;
+  } else {
+    // Place (or swap) an inventory card into this slot.
+    const card = run.inventory[sel.index];
+    if (card !== undefined) {
+      const displaced = slots[i];
+      slots[i] = card;
+      run.inventory.splice(sel.index, 1);
+      if (displaced !== null) run.inventory.push(displaced);
+    }
+    state.editSel = null;
+  }
+}
+
+function clickInventory(state: GameState, run: RunState, i: number): void {
+  const sel = state.editSel;
+  if (sel === null) {
+    if (i < run.inventory.length) state.editSel = { zone: "inv", index: i };
+    return;
+  }
+  if (sel.zone === "slot") {
+    // Unequip the selected slot card into the inventory.
+    const card = run.caster.slots[sel.index];
+    if (card !== null) {
+      run.inventory.push(card);
+      run.caster.slots[sel.index] = null;
+    }
+  }
+  state.editSel = null;
 }
 
 function updateEnd(state: GameState, input: Input, dt: number): void {
@@ -147,8 +266,58 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   const s = run.stats;
   const sec = run.sector;
   const def = sectorDef(sec.index);
+  const mats = config.materials;
   run.time += dt;
   sec.elapsed += dt;
+
+  stepSubstrate(sec.substrate, dt);
+
+  // What is the player standing in?
+  const groundMat = matAt(sec.substrate, p.x, p.y);
+  let speedMult = 1;
+  let accelMult = 1;
+  let dragMult = 1;
+  if (groundMat === MAT.coolant) {
+    if (!s.hydroJets) speedMult = mats.coolantSpeedMult;
+    p.wet = mats.wetDuration;
+    p.oiled = 0;
+    if (p.burning > 0) {
+      p.burning = 0;
+      addBurst(run, p.x, p.y, config.colors.steam, 10);
+    }
+  } else if (groundMat === MAT.oil) {
+    if (!s.slickCoating) {
+      accelMult = mats.oilAccelMult;
+      dragMult = mats.oilDragMult;
+    }
+    p.oiled = mats.oiledDuration;
+  } else if (groundMat === MAT.fire) {
+    tryIgnitePlayer(run);
+  } else if (groundMat === MAT.acid) {
+    p.acidTimer -= dt;
+    if (p.acidTimer <= 0 && p.iframes <= 0 && p.dashTimer <= 0) {
+      p.acidTimer = mats.acidDamageInterval;
+      damagePlayer(state, run, -p.faceX, -p.faceY);
+      if (state.phase !== "playing") return;
+    }
+  }
+  if (groundMat !== MAT.acid) p.acidTimer = 0;
+
+  // Status timers. Burning deals its damage partway through the countdown —
+  // reaching coolant first extinguishes it.
+  if (p.burning > 0) {
+    const before = p.burning;
+    p.burning -= dt;
+    addParticle(run, p.x + Math.sin(run.time * 31) * 6, p.y - 8, 0, -60, 0.3, 3, config.colors.fire);
+    if (before > mats.burnDamageAt && p.burning <= mats.burnDamageAt) {
+      damagePlayer(state, run, -p.faceX, -p.faceY);
+      if (state.phase !== "playing") return;
+    }
+    // A burning probe drips fire onto flammable ground it crosses.
+    if (matAt(sec.substrate, p.x, p.y) === MAT.oil) igniteAt(sec.substrate, p.x, p.y);
+  }
+  p.wet = Math.max(0, p.wet - dt);
+  p.oiled = Math.max(0, p.oiled - dt);
 
   // Movement + dash.
   const ax = input.axis();
@@ -190,15 +359,17 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
       p.vy = p.dashY * s.maxSpeed;
     }
     addParticle(run, p.x, p.y, -p.dashX * 40, -p.dashY * 40, 0.25, 4, config.colors.player);
+    if (s.corrosiveWake) spillAcidAt(sec.substrate, p.x, p.y);
   } else {
-    p.vx += ax.x * s.accel * dt;
-    p.vy += ax.y * s.accel * dt;
-    const damp = Math.exp(-s.drag * dt);
+    p.vx += ax.x * s.accel * accelMult * dt;
+    p.vy += ax.y * s.accel * accelMult * dt;
+    const damp = Math.exp(-s.drag * dragMult * dt);
     p.vx *= damp;
     p.vy *= damp;
+    const cap = s.maxSpeed * speedMult;
     const sp = Math.hypot(p.vx, p.vy);
-    if (sp > s.maxSpeed) {
-      const k = s.maxSpeed / sp;
+    if (sp > cap) {
+      const k = cap / sp;
       p.vx *= k;
       p.vy *= k;
     }
@@ -207,24 +378,20 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   p.x += p.vx * dt;
   p.y += p.vy * dt;
 
-  // Collide with walls (slide) and arena bounds.
+  // Collide with terrain (wall cells) — slide along contacts.
   const pr = config.player.radius;
-  for (const wl of sec.walls) {
-    const res = resolveCircleRect(p.x, p.y, pr, wl);
-    if (res) {
-      p.x = res.x;
-      p.y = res.y;
-      const vn = p.vx * res.nx + p.vy * res.ny;
-      if (vn < 0) {
-        p.vx -= res.nx * vn;
-        p.vy -= res.ny * vn;
-      }
+  const hit = resolveCircleSubstrate(sec.substrate, p.x, p.y, pr);
+  if (hit) {
+    p.x = hit.x;
+    p.y = hit.y;
+    const vn = p.vx * hit.nx + p.vy * hit.ny;
+    if (vn < 0) {
+      p.vx -= hit.nx * vn;
+      p.vy -= hit.ny * vn;
     }
   }
-  if (p.x < pr) { p.x = pr; if (p.vx < 0) p.vx = 0; }
-  if (p.x > sec.w - pr) { p.x = sec.w - pr; if (p.vx > 0) p.vx = 0; }
-  if (p.y < pr) { p.y = pr; if (p.vy < 0) p.vy = 0; }
-  if (p.y > sec.h - pr) { p.y = sec.h - pr; if (p.vy > 0) p.vy = 0; }
+  p.x = clamp(p.x, pr, sec.w - pr);
+  p.y = clamp(p.y, pr, sec.h - pr);
 
   // Dash recharge and timers.
   if (p.charges < s.dashCharges) {
@@ -236,7 +403,18 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   }
   p.iframes = Math.max(0, p.iframes - dt);
 
+  // Casting: hold the mouse to fire at the caster's cadence.
+  run.caster.castTimer = Math.max(0, run.caster.castTimer - dt);
+  if (input.mouseHeld() && run.caster.castTimer <= 0) {
+    const m = input.mouse();
+    const aimX = run.camX + (m.x - config.width / 2);
+    const aimY = run.camY + (m.y - config.height / 2);
+    castFromDeck(run, aimX, aimY);
+  }
+
+  updateProjectiles(run, sec, dt);
   updateHazards(run, sec, dt);
+  updateCanisters(state, run, sec, dt);
   updateHeat(run, sec, def.heatInterval, def.heatCap, dt);
   checkPlayerDamage(state, run);
 
@@ -256,34 +434,269 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   tickCosmetics(run, dt);
 }
 
+function tryIgnitePlayer(run: RunState): void {
+  const p = run.player;
+  if (p.burning > 0 || p.wet > 0 || run.stats.fireproof) return;
+  if (p.dashTimer > 0) return; // dashing skims over flames
+  p.burning = config.materials.burnDuration * (p.oiled > 0 ? 1.4 : 1);
+  addBurst(run, p.x, p.y, config.colors.fire, 8);
+}
+
+// --- casting & projectiles -------------------------------------------------
+
+/**
+ * Walk the deck from the pointer: fold consecutive modifier cards into the
+ * next payload/utility card, cast it, and advance. Wrapping past the end of
+ * the deck triggers the recharge delay instead of the (short) cast delay.
+ */
+function castFromDeck(run: RunState, aimX: number, aimY: number): void {
+  const c = run.caster;
+  const len = c.slots.length;
+  const mods = emptyCastMods();
+  let payload: CardId | null = null;
+  let idx = c.pointer;
+  let wrapped = false;
+
+  for (let scanned = 0; scanned < len; scanned++) {
+    const card = c.slots[idx];
+    idx += 1;
+    if (idx >= len) {
+      idx = 0;
+      wrapped = true;
+    }
+    if (card === null) continue;
+    const def = CARDS[card];
+    if (def.kind === "modifier") {
+      applyCastModifier(mods, card);
+      continue;
+    }
+    payload = card;
+    break;
+  }
+
+  c.pointer = idx;
+  if (payload === null) {
+    // Deck holds no castable card (empty or modifiers only): brief idle spin.
+    c.castTimer = c.rechargeTime;
+    c.recharging = true;
+    return;
+  }
+
+  const def = CARDS[payload];
+  c.castTimer = wrapped ? c.rechargeTime + def.delayAdd : c.castDelay + def.delayAdd;
+  c.recharging = wrapped;
+
+  const p = run.player;
+  const baseAngle = Math.atan2(aimY - p.y, aimX - p.x);
+
+  if (payload === "blink") {
+    blinkPlayer(run, baseAngle);
+    return;
+  }
+
+  const shots = def.pellets * mods.count;
+  const halfSpread = def.spread * (def.pellets - 1) + (mods.count > 1 ? 0.05 : 0);
+  const sec = run.sector;
+  for (let i = 0; i < shots; i++) {
+    if (sec.projectiles.length >= config.caster.projectileCap) break;
+    const t = shots === 1 ? 0 : (i / (shots - 1)) * 2 - 1; // -1 .. 1 across the fan
+    const angle = baseAngle + t * halfSpread;
+    const speed = def.speed * mods.speedMult;
+    sec.projectiles.push({
+      x: p.x + Math.cos(angle) * (config.player.radius + 6),
+      y: p.y + Math.sin(angle) * (config.player.radius + 6),
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 4,
+      dmg: def.dmg,
+      card: payload,
+      life: def.life,
+      bounces: mods.bounces,
+      pierce: mods.pierce,
+      hitIds: [],
+    });
+  }
+  addBurst(run, p.x + Math.cos(baseAngle) * 14, p.y + Math.sin(baseAngle) * 14, def.color, 3);
+}
+
+/** Short teleport toward the aim, stopped by terrain. */
+function blinkPlayer(run: RunState, angle: number): void {
+  const p = run.player;
+  const sec = run.sector;
+  const step = 8;
+  const max = config.caster.blinkRange;
+  let bx = p.x;
+  let by = p.y;
+  for (let d = step; d <= max; d += step) {
+    const nx = p.x + Math.cos(angle) * d;
+    const ny = p.y + Math.sin(angle) * d;
+    if (nx < 20 || ny < 20 || nx > sec.w - 20 || ny > sec.h - 20) break;
+    if (matAt(sec.substrate, nx, ny) === MAT.wall) break;
+    bx = nx;
+    by = ny;
+  }
+  addBurst(run, p.x, p.y, config.colors.player, 8);
+  p.x = bx;
+  p.y = by;
+  p.iframes = Math.max(p.iframes, 0.1);
+  addBurst(run, p.x, p.y, config.colors.player, 8);
+}
+
+function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
+  for (let i = sec.projectiles.length - 1; i >= 0; i--) {
+    const pr = sec.projectiles[i];
+    pr.life -= dt;
+    if (pr.life <= 0) {
+      projectileImpact(run, sec, pr.x, pr.y, pr.card);
+      sec.projectiles.splice(i, 1);
+      continue;
+    }
+
+    // Substep the motion so fast (hasted) shots can't tunnel through
+    // single-cell walls: never advance more than ~half a cell per check.
+    const oldX = pr.x;
+    const oldY = pr.y;
+    const stepLen = Math.hypot(pr.vx, pr.vy) * dt;
+    const steps = Math.max(1, Math.ceil(stepLen / 8));
+    let blocked = false;
+    for (let sStep = 0; sStep < steps && !blocked; sStep++) {
+      pr.x += (pr.vx * dt) / steps;
+      pr.y += (pr.vy * dt) / steps;
+      blocked =
+        matAt(sec.substrate, pr.x, pr.y) === MAT.wall ||
+        pr.x < 0 || pr.y < 0 || pr.x > sec.w || pr.y > sec.h;
+    }
+
+    // Terrain hit — bounce (axis-aligned reflection) or impact.
+    if (blocked) {
+      if (pr.bounces > 0) {
+        pr.bounces -= 1;
+        const hitX = matAt(sec.substrate, pr.x, oldY) === MAT.wall || pr.x < 0 || pr.x > sec.w;
+        const hitY = matAt(sec.substrate, oldX, pr.y) === MAT.wall || pr.y < 0 || pr.y > sec.h;
+        if (hitX || !hitY) pr.vx = -pr.vx;
+        if (hitY || !hitX) pr.vy = -pr.vy;
+        pr.x = oldX;
+        pr.y = oldY;
+        addBurst(run, pr.x, pr.y, CARDS[pr.card].color, 3);
+      } else {
+        projectileImpact(run, sec, oldX, oldY, pr.card);
+        sec.projectiles.splice(i, 1);
+      }
+      continue;
+    }
+
+    // Canister hit — light the fuse.
+    for (const can of sec.canisters) {
+      if (can.fuse < 0 && dist(can.x, can.y, pr.x, pr.y) < can.r + pr.r) {
+        can.fuse = config.canister.fuse;
+      }
+    }
+
+    // Hazard hits.
+    let consumed = false;
+    for (let h = sec.hazards.length - 1; h >= 0; h--) {
+      const hzd = sec.hazards[h];
+      if (pr.hitIds.includes(hzd.id)) continue;
+      if (dist(hzd.x, hzd.y, pr.x, pr.y) >= hzd.r + pr.r) continue;
+      pr.hitIds.push(hzd.id);
+      damageHazard(run, sec, h, pr.dmg, pr.card);
+      projectileImpact(run, sec, pr.x, pr.y, pr.card);
+      if (!pr.pierce) {
+        sec.projectiles.splice(i, 1);
+        consumed = true;
+        break;
+      }
+    }
+    if (consumed) continue;
+  }
+}
+
+/** Impact side effects: material payload cards splash into the substrate. */
+function projectileImpact(run: RunState, sec: SectorState, x: number, y: number, card: CardId): void {
+  const def = CARDS[card];
+  addBurst(run, x, y, def.color, 5);
+  if (def.splash) {
+    splashMaterial(sec.substrate, x, y, config.caster.splashRadius, def.splash);
+  }
+}
+
+/** Apply card damage and card-specific statuses to a hazard. */
+function damageHazard(run: RunState, sec: SectorState, index: number, dmg: number, card: CardId): void {
+  const hzd = sec.hazards[index];
+  if (card === "firebolt" && (hzd.kind === "drifter" || hzd.kind === "seeker" || hzd.kind === "corroder")) {
+    hzd.burn = Math.max(hzd.burn, config.materials.hazardBurnTime);
+  }
+  if (card === "waterball" && (hzd.kind === "drifter" || hzd.kind === "seeker" || hzd.kind === "corroder")) {
+    hzd.burn = 0;
+  }
+  hzd.hp -= dmg;
+  if (hzd.hp <= 0) destroyHazard(run, sec, index);
+}
+
+/** Remove a hazard: credit the kill, burst, and drop flux where it died. */
+function destroyHazard(run: RunState, sec: SectorState, index: number): void {
+  const hzd = sec.hazards[index];
+  run.kills += 1;
+  const color = hazardColor(hzd);
+  addBurst(run, hzd.x, hzd.y, color, 14);
+  const drops = config.caster.killDrop + (hzd.kind === "sweeper" || hzd.kind === "pulsar" ? 1 : 0);
+  for (let d = 0; d < drops; d++) {
+    sec.motes.push({ x: hzd.x + (d - drops / 2) * 10, y: hzd.y + ((d * 7) % 13) - 6 });
+  }
+  // A corroder ruptures into an acid splash — stand back.
+  if (hzd.kind === "corroder") {
+    splashMaterial(sec.substrate, hzd.x, hzd.y, 26, "acid");
+  }
+  sec.hazards.splice(index, 1);
+}
+
+function hazardColor(hzd: Hazard): string {
+  switch (hzd.kind) {
+    case "drifter": return config.colors.drifter;
+    case "seeker": return config.colors.seeker;
+    case "sweeper": return config.colors.sweeper;
+    case "pulsar": return config.colors.pulsar;
+    case "igniter": return config.colors.igniter;
+    case "corroder": return config.colors.corroder;
+  }
+}
+
 // --- hazards ---------------------------------------------------------------
 
 function updateHazards(run: RunState, sec: SectorState, dt: number): void {
   const hz = config.hazards;
-  for (const hzd of sec.hazards) {
+  const p = run.player;
+  const playerInSteam = matAt(sec.substrate, p.x, p.y) === MAT.steam;
+
+  for (let h = sec.hazards.length - 1; h >= 0; h--) {
+    const hzd = sec.hazards[h];
+
+    // Shared status handling for burnable ground agents.
+    if (hzd.kind === "drifter" || hzd.kind === "seeker" || hzd.kind === "corroder") {
+      const ground = matAt(sec.substrate, hzd.x, hzd.y);
+      if (ground === MAT.fire && hzd.burn <= 0) hzd.burn = config.materials.hazardBurnTime;
+      if (ground === MAT.coolant && hzd.burn > 0) hzd.burn = 0;
+      if (hzd.burn > 0) {
+        hzd.burn -= dt;
+        addParticle(run, hzd.x, hzd.y - 6, 0, -50, 0.25, 2.5, config.colors.fire);
+        if (ground === MAT.oil) igniteAt(sec.substrate, hzd.x, hzd.y);
+        if (hzd.burn <= 0) {
+          destroyHazard(run, sec, h);
+          continue;
+        }
+      }
+    }
+
     switch (hzd.kind) {
       case "drifter": {
-        hzd.x += hzd.vx * dt;
-        hzd.y += hzd.vy * dt;
-        for (const wl of sec.walls) {
-          const res = resolveCircleRect(hzd.x, hzd.y, hzd.r, wl);
-          if (res) {
-            hzd.x = res.x;
-            hzd.y = res.y;
-            if (res.nx > 0) hzd.vx = Math.abs(hzd.vx);
-            else if (res.nx < 0) hzd.vx = -Math.abs(hzd.vx);
-            if (res.ny > 0) hzd.vy = Math.abs(hzd.vy);
-            else if (res.ny < 0) hzd.vy = -Math.abs(hzd.vy);
-          }
-        }
-        if (hzd.x < hzd.r) { hzd.x = hzd.r; hzd.vx = Math.abs(hzd.vx); }
-        if (hzd.x > sec.w - hzd.r) { hzd.x = sec.w - hzd.r; hzd.vx = -Math.abs(hzd.vx); }
-        if (hzd.y < hzd.r) { hzd.y = hzd.r; hzd.vy = Math.abs(hzd.vy); }
-        if (hzd.y > sec.h - hzd.r) { hzd.y = sec.h - hzd.r; hzd.vy = -Math.abs(hzd.vy); }
+        const ground = matAt(sec.substrate, hzd.x, hzd.y);
+        const mult = ground === MAT.coolant ? config.materials.coolantSpeedMult : 1;
+        hzd.x += hzd.vx * mult * dt;
+        hzd.y += hzd.vy * mult * dt;
+        bounceOffTerrain(sec, hzd);
         break;
       }
       case "seeker": {
-        const p = run.player;
         const dx = p.x - hzd.x;
         const dy = p.y - hzd.y;
         const d = Math.hypot(dx, dy) || 1;
@@ -292,24 +705,27 @@ function updateHazards(run: RunState, sec: SectorState, dt: number): void {
         const ddx = desX - hzd.vx;
         const ddy = desY - hzd.vy;
         const dl = Math.hypot(ddx, ddy);
+        const ground = matAt(sec.substrate, hzd.x, hzd.y);
+        // Steam hides you; oil makes their steering mushy.
+        let steer = hz.seeker.steer;
+        if (playerInSteam) steer *= config.materials.steamSeekerMult;
+        if (ground === MAT.oil) steer *= 0.5;
         if (dl > 0.001) {
-          const f = Math.min(1, (hz.seeker.steer * dt) / dl);
+          const f = Math.min(1, (steer * dt) / dl);
           hzd.vx += ddx * f;
           hzd.vy += ddy * f;
         }
-        hzd.x += hzd.vx * dt;
-        hzd.y += hzd.vy * dt;
-        // Seekers slide along walls (emergent: walls work as cover).
-        for (const wl of sec.walls) {
-          const res = resolveCircleRect(hzd.x, hzd.y, hzd.r, wl);
-          if (res) {
-            hzd.x = res.x;
-            hzd.y = res.y;
-            const vn = hzd.vx * res.nx + hzd.vy * res.ny;
-            if (vn < 0) {
-              hzd.vx -= res.nx * vn;
-              hzd.vy -= res.ny * vn;
-            }
+        const mult = ground === MAT.coolant ? config.materials.coolantSpeedMult : 1;
+        hzd.x += hzd.vx * mult * dt;
+        hzd.y += hzd.vy * mult * dt;
+        const hit = resolveCircleSubstrate(sec.substrate, hzd.x, hzd.y, hzd.r);
+        if (hit) {
+          hzd.x = hit.x;
+          hzd.y = hit.y;
+          const vn = hzd.vx * hit.nx + hzd.vy * hit.ny;
+          if (vn < 0) {
+            hzd.vx -= hit.nx * vn;
+            hzd.vy -= hit.ny * vn;
           }
         }
         hzd.x = clamp(hzd.x, hzd.r, sec.w - hzd.r);
@@ -331,13 +747,110 @@ function updateHazards(run: RunState, sec: SectorState, dt: number): void {
         }
         break;
       }
+      case "igniter": {
+        hzd.x += hzd.vx * dt;
+        hzd.y += hzd.vy * dt;
+        bounceOffTerrain(sec, hzd);
+        const ground = matAt(sec.substrate, hzd.x, hzd.y);
+        if (ground === MAT.coolant) {
+          // Quenched: dies in a puff of steam.
+          addBurst(run, hzd.x, hzd.y, config.colors.steam, 12);
+          run.kills += 1;
+          sec.hazards.splice(h, 1);
+          break;
+        }
+        igniteAt(sec.substrate, hzd.x, hzd.y);
+        break;
+      }
+      case "corroder": {
+        hzd.turnTimer -= dt;
+        if (hzd.turnTimer <= 0) {
+          hzd.turnTimer = config.hazards.corroder.turnEvery;
+          // Deterministic wander: new heading from position+time hash.
+          const a = (Math.sin(hzd.x * 0.013 + hzd.y * 0.017 + sec.elapsed * 3.1) * 43758.5453) % (Math.PI * 2);
+          hzd.vx = Math.cos(a) * config.hazards.corroder.speed;
+          hzd.vy = Math.sin(a) * config.hazards.corroder.speed;
+        }
+        hzd.x += hzd.vx * dt;
+        hzd.y += hzd.vy * dt;
+        bounceOffTerrain(sec, hzd);
+        spillAcidAt(sec.substrate, hzd.x, hzd.y);
+        break;
+      }
     }
   }
 
+  const rc = config.hazards.pulsar;
   for (let i = sec.rings.length - 1; i >= 0; i--) {
     const ring = sec.rings[i];
     ring.age += dt;
-    if (ring.age >= hz.pulsar.ringDuration) sec.rings.splice(i, 1);
+    if (ring.age >= rc.ringDuration) sec.rings.splice(i, 1);
+  }
+}
+
+/** Drifter-style terrain response: reflect off wall cells and arena bounds. */
+function bounceOffTerrain(
+  sec: SectorState,
+  hzd: { x: number; y: number; vx: number; vy: number; r: number },
+): void {
+  const hit = resolveCircleSubstrate(sec.substrate, hzd.x, hzd.y, hzd.r);
+  if (hit) {
+    hzd.x = hit.x;
+    hzd.y = hit.y;
+    if (hit.nx > 0) hzd.vx = Math.abs(hzd.vx);
+    else if (hit.nx < 0) hzd.vx = -Math.abs(hzd.vx);
+    if (hit.ny > 0) hzd.vy = Math.abs(hzd.vy);
+    else if (hit.ny < 0) hzd.vy = -Math.abs(hzd.vy);
+  }
+  if (hzd.x < hzd.r) { hzd.x = hzd.r; hzd.vx = Math.abs(hzd.vx); }
+  if (hzd.x > sec.w - hzd.r) { hzd.x = sec.w - hzd.r; hzd.vx = -Math.abs(hzd.vx); }
+  if (hzd.y < hzd.r) { hzd.y = hzd.r; hzd.vy = Math.abs(hzd.vy); }
+  if (hzd.y > sec.h - hzd.r) { hzd.y = sec.h - hzd.r; hzd.vy = -Math.abs(hzd.vy); }
+}
+
+// --- canisters -------------------------------------------------------------
+
+function updateCanisters(state: GameState, run: RunState, sec: SectorState, dt: number): void {
+  const p = run.player;
+  const cfg = config.canister;
+  for (let i = sec.canisters.length - 1; i >= 0; i--) {
+    const can = sec.canisters[i];
+    if (can.fuse < 0) {
+      // Armed: fire cooks it off; a dashing player triggers it deliberately.
+      const onFire = matAt(sec.substrate, can.x, can.y) === MAT.fire;
+      const dashTouch = p.dashTimer > 0 && dist(p.x, p.y, can.x, can.y) < can.r + config.player.radius;
+      if (onFire || dashTouch) can.fuse = cfg.fuse;
+      continue;
+    }
+    can.fuse -= dt;
+    if (can.fuse > 0) continue;
+
+    sec.canisters.splice(i, 1);
+    detonate(sec.substrate, can.x, can.y, cfg.carveRadius, cfg.igniteRadius);
+    run.shake = 1.6;
+    addBurst(run, can.x, can.y, config.colors.canister, 26);
+    addBurst(run, can.x, can.y, config.colors.fireHot, 18);
+
+    // Chain other canisters with a short stagger.
+    for (const other of sec.canisters) {
+      if (other.fuse < 0 && dist(other.x, other.y, can.x, can.y) < cfg.damageRadius + 20) {
+        other.fuse = cfg.chainFuse;
+      }
+    }
+    // Damage everything in the blast.
+    for (let h = sec.hazards.length - 1; h >= 0; h--) {
+      const hzd = sec.hazards[h];
+      if (dist(hzd.x, hzd.y, can.x, can.y) < cfg.damageRadius + hzd.r) {
+        destroyHazard(run, sec, h);
+      }
+    }
+    const pd = dist(p.x, p.y, can.x, can.y);
+    if (pd < cfg.damageRadius + config.player.radius && !run.stats.demolition) {
+      if (p.iframes <= 0 && p.dashTimer <= 0) {
+        damagePlayer(state, run, (p.x - can.x) / (pd || 1), (p.y - can.y) / (pd || 1));
+        if (state.phase !== "playing") return;
+      }
+    }
   }
 }
 
@@ -354,10 +867,10 @@ function updateHeat(run: RunState, sec: SectorState, interval: number, cap: numb
     const side = rangeInt(rng, 0, 3);
     let x = 0;
     let y = 0;
-    if (side === 0) { x = range(rng, 40, sec.w - 40); y = 20; }
-    else if (side === 1) { x = range(rng, 40, sec.w - 40); y = sec.h - 20; }
-    else if (side === 2) { x = 20; y = range(rng, 40, sec.h - 40); }
-    else { x = sec.w - 20; y = range(rng, 40, sec.h - 40); }
+    if (side === 0) { x = range(rng, 40, sec.w - 40); y = 26; }
+    else if (side === 1) { x = range(rng, 40, sec.w - 40); y = sec.h - 26; }
+    else if (side === 2) { x = 26; y = range(rng, 40, sec.h - 40); }
+    else { x = sec.w - 26; y = range(rng, 40, sec.h - 40); }
     if (dist(x, y, run.player.x, run.player.y) < 220) continue; // never spawn onto the player
 
     const tx = sec.w * range(rng, 0.3, 0.7);
@@ -366,11 +879,14 @@ function updateHeat(run: RunState, sec: SectorState, interval: number, cap: numb
     const speed = range(rng, hz.speedMin, hz.speedMax);
     sec.hazards.push({
       kind: "drifter",
+      id: sec.nextId++,
+      hp: hz.hp,
       x,
       y,
       vx: ((tx - x) / d) * speed,
       vy: ((ty - y) / d) * speed,
       r: range(rng, hz.rMin, hz.rMax),
+      burn: 0,
     });
     sec.heatSpawned += 1;
     addBurst(run, x, y, config.colors.drifter, 8);
@@ -417,7 +933,7 @@ function damagePlayer(state: GameState, run: RunState, nx: number, ny: number): 
 
   if (run.integrity <= 0) {
     const banked = bank(state, run, false);
-    state.outcome = { won: false, banked, sectorReached: run.sectorIndex + 1, time: run.time };
+    state.outcome = { won: false, banked, sectorReached: run.sectorIndex + 1, time: run.time, kills: run.kills };
     state.phase = "gameover";
     addBurst(run, p.x, p.y, config.colors.player, 40);
   }
@@ -434,6 +950,15 @@ function collectPickups(state: GameState, run: RunState): void {
       sec.motes.splice(i, 1);
       run.flux += config.flux.mote;
       addBurst(run, m.x, m.y, config.colors.mote, 4);
+    }
+  }
+
+  for (let i = sec.cardNodes.length - 1; i >= 0; i--) {
+    const node = sec.cardNodes[i];
+    if (dist(node.x, node.y, p.x, p.y) < s.pickupRadius + 4) {
+      sec.cardNodes.splice(i, 1);
+      run.inventory.push(node.card);
+      addBurst(run, node.x, node.y, CARDS[node.card].color, 16);
     }
   }
 
