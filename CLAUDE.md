@@ -69,7 +69,8 @@ stabilize.
   `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `perf:`. Imperative, present tense.
 - **Branches:** short-lived feature branches off `main` for non-trivial work; small doc
   fixes can go straight to the working branch. Keep `main` in a runnable state.
-- **Releases:** tag milestones (`v0.1.0`, …); add a `CHANGELOG.md` when the first one lands.
+- **Releases:** tag milestones (`v0.1.0`, `v0.3.0`, …) and record them in `CHANGELOG.md`
+  (Keep a Changelog format; note user-facing changes under `[Unreleased]` as you go).
 - **Keep docs in sync with code.** When you change how something runs or is structured,
   update this file and the README in the same commit.
 
@@ -83,6 +84,6 @@ Deliberately minimal — two docs, kept current:
 
 ## Things not set up yet (intentionally)
 
-Issue/PR templates, CONTRIBUTING, a changelog, a roadmap file, a test framework, and any
-game engine (Phaser/Three.js). Add these when the project actually needs them, not
-preemptively — e.g. a `CHANGELOG.md` once you cut your first tagged release.
+Issue/PR templates, CONTRIBUTING, a roadmap file, a test framework, and any game
+engine (Phaser/Three.js). Add these when the project actually needs them, not
+preemptively.
