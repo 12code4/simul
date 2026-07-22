@@ -8,7 +8,9 @@ import { createRng, type Rng } from "./rng";
 import { loadMeta, type MetaState } from "./meta";
 import { generateSector, type SectorState } from "./sector";
 import type { ModId } from "./mods";
-import { createStarterCaster, type CardId, type Caster } from "./cards";
+import { CARDS, createStarterCaster, type CardId, type Caster } from "./cards";
+
+export const MAX_CASTERS = 2;
 
 export type Phase = "title" | "playing" | "draft" | "paused" | "gameover" | "victory";
 
@@ -70,9 +72,10 @@ export interface RunState {
   /** Hazards destroyed this run (cards, fire, explosions, coolant). */
   kills: number;
   mods: ModId[];
-  /** The player's deck. */
-  caster: Caster;
-  /** Unequipped cards, edited into the caster between sectors. */
+  /** The player's decks (up to MAX_CASTERS); swap in play with Q. */
+  casters: Caster[];
+  activeCaster: number;
+  /** Unequipped cards, edited into the casters between sectors. */
   inventory: CardId[];
   stats: RunStats;
   player: PlayerState;
@@ -85,15 +88,19 @@ export interface RunState {
   time: number;
 }
 
-/** Dev/testing hooks read from the URL (?seed=hex&sector=1-5). */
+/** Dev/testing hooks read from the URL (?seed=hex&sector=1-5&deck=a,b,c). */
 export interface DevParams {
   seed: number | null;
   sector: number | null;
+  /** Starting deck override for the first caster (comma-separated card ids). */
+  deck: CardId[] | null;
 }
 
 /** Selection state for the between-sector deck editor (click-click swaps). */
 export interface EditSelection {
   zone: "slot" | "inv";
+  /** Which caster row, for slot selections. */
+  caster: number;
   index: number;
 }
 
@@ -117,14 +124,21 @@ function readDevParams(): DevParams {
     const params = new URLSearchParams(window.location.search);
     const seedRaw = params.get("seed");
     const sectorRaw = params.get("sector");
+    const deckRaw = params.get("deck");
     const seed = seedRaw !== null ? Number.parseInt(seedRaw, 16) : NaN;
     const sector = sectorRaw !== null ? Number.parseInt(sectorRaw, 10) : NaN;
+    let deck: CardId[] | null = null;
+    if (deckRaw) {
+      const ids = deckRaw.split(",").filter((id): id is CardId => id in CARDS);
+      if (ids.length > 0) deck = ids;
+    }
     return {
       seed: Number.isFinite(seed) ? seed >>> 0 : null,
       sector: Number.isFinite(sector) ? Math.min(5, Math.max(1, sector)) : null,
+      deck,
     };
   } catch {
-    return { seed: null, sector: null };
+    return { seed: null, sector: null, deck: null };
   }
 }
 
@@ -195,7 +209,8 @@ export function createRun(meta: MetaState, seed: number): RunState {
     flux: 0,
     kills: 0,
     mods: [],
-    caster: createStarterCaster(),
+    casters: [createStarterCaster()],
+    activeCaster: 0,
     inventory: [],
     stats,
     player: makePlayer(sector, stats),

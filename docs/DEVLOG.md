@@ -8,6 +8,30 @@ material for devlogs or social posts later.
 
 ---
 
+## 2026-07-22 — v0.5 "Trigger Protocol": the deck gets its depth
+
+- First update built ON the deck system per the new pillar, and it's the most
+  mechanically dense one yet:
+  - **Trigger cards** (Noita's defining mechanic): Spark Trigger casts the next
+    deck card — with its folded modifiers — where it lands; Timer Trigger casts it
+    mid-flight. One nesting level by design (cargo triggers act as plain payloads).
+    Cargo rides only the first pellet of a multi-pellet trigger (one bomb, not
+    twelve). **Blink as cargo teleports you to the impact point** — the classic
+    Noita teleport-bolt, and instantly the most fun card interaction in the game.
+  - **Multicast** modifier: the next 2 payloads cast simultaneously (stacks to 3).
+  - **Caster Frames**: casters are now loot. Standard / Lattice (7 slots, slow
+    recharge) / Snubnose (3 slots, fast, +1 dmg) / Shuffler (seeded-random cast
+    order re-dealt each recharge, very fast — Noita shuffle wands). Carry two, swap
+    with Q; each caster keeps its own timers, so covering a recharge by weaving
+    decks is intended tech, not an exploit.
+- Implementation notes: the cast path is now a reusable "deck walk" (takePayload
+  folds modifiers and advances a cursor) that casting, multicast collection, and
+  cargo collection all share; shuffler order lives in `Caster.order` (identity for
+  ordered frames) and re-deals through `RunState.rng`. New dev hook `?deck=a,b,c`
+  rigs the starting deck — that's how triggers/multicast got scripted browser
+  tests (cargo ring visible in flight; bolt+slug flying side by side).
+- **Next:** playtest the frame economy (is Shuffler too strong?), then audio.
+
 ## 2026-07-22 — v0.4 "The Caster": materials cut, deck doubled down
 
 - **Creative direction call (from the human side): the liquid/material layer didn't

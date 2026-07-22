@@ -18,9 +18,9 @@ export function inRect(px: number, py: number, r: UiRect): boolean {
 // --- sector-clear screen (mod draft + deck editing) ------------------------
 
 export const DRAFT_CARD_W = 230;
-export const DRAFT_CARD_H = 108;
+export const DRAFT_CARD_H = 100;
 export const DRAFT_CARD_GAP = 22;
-export const DRAFT_CARD_Y = 128;
+export const DRAFT_CARD_Y = 112;
 
 export function draftCardRect(i: number, count: number): UiRect {
   const total = count * DRAFT_CARD_W + (count - 1) * DRAFT_CARD_GAP;
@@ -32,23 +32,25 @@ export function draftCardRect(i: number, count: number): UiRect {
   };
 }
 
-export const CARD_TILE = 46;
+export const CARD_TILE = 44;
 export const CARD_TILE_GAP = 10;
 
-export const DECK_SLOTS_Y = 322;
+export const DECK_SLOTS_Y = 296;
+/** Vertical spacing between the two caster rows in the editor. */
+export const DECK_ROW_H = 62;
 
-export function deckSlotRect(i: number, slotCount: number): UiRect {
+export function deckSlotRect(casterRow: number, i: number, slotCount: number): UiRect {
   const total = slotCount * CARD_TILE + (slotCount - 1) * CARD_TILE_GAP;
   return {
     x: config.width / 2 - total / 2 + i * (CARD_TILE + CARD_TILE_GAP),
-    y: DECK_SLOTS_Y,
+    y: DECK_SLOTS_Y + casterRow * DECK_ROW_H,
     w: CARD_TILE,
     h: CARD_TILE,
   };
 }
 
-export const INV_Y = 420;
-export const INV_COLS = 10;
+export const INV_Y = 448;
+export const INV_COLS = 12;
 
 /** Inventory grid tile. Index may be one past the end (the unequip target). */
 export function inventoryRect(i: number): UiRect {
@@ -65,7 +67,7 @@ export function inventoryRect(i: number): UiRect {
 
 export const CONTINUE_RECT: UiRect = {
   x: config.width / 2 - 110,
-  y: 542,
+  y: 554,
   w: 220,
-  h: 36,
+  h: 32,
 };

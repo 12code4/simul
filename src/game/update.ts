@@ -2,15 +2,26 @@
 // a phase machine (title/playing/draft/paused/end screens) plus the gameplay
 // step itself. Mutates state; never draws.
 
-import { applyCastModifier, CARDS, emptyCastMods, type CardId } from "./cards";
+import {
+  applyCastModifier,
+  CARDS,
+  createCaster,
+  emptyCastMods,
+  FRAMES,
+  identityOrder,
+  type CardId,
+  type CastMods,
+  type Caster,
+  type FrameId,
+} from "./cards";
 import { config } from "./config";
 import type { Input } from "./input";
 import { buyUpgrade, META_TRACKS, saveMeta } from "./meta";
 import { applyMod, rollDraft, type ModId } from "./mods";
 import { clamp, dist } from "./physics";
-import { range, rangeInt } from "./rng";
+import { range, rangeInt, shuffle } from "./rng";
 import { sectorDef, type Hazard, type SectorState } from "./sector";
-import { createRun, enterSector, type GameState, type RunState } from "./state";
+import { createRun, enterSector, MAX_CASTERS, type GameState, type RunState } from "./state";
 import { detonate, MAT, matAt, resolveCircleSubstrate } from "./substrate";
 import { CONTINUE_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect } from "./ui";
 
@@ -47,6 +58,12 @@ function startRun(state: GameState): void {
   state.run = createRun(state.meta, seed);
   if (state.dev.sector !== null && state.dev.sector > 1) {
     enterSector(state.run, state.dev.sector - 1);
+  }
+  if (state.dev.deck !== null) {
+    const slots = state.run.casters[0].slots;
+    state.dev.deck.slice(0, slots.length).forEach((card, i) => {
+      slots[i] = card;
+    });
   }
   state.draftOptions = null;
   state.outcome = null;
@@ -150,6 +167,11 @@ function advanceFromDraft(state: GameState, run: RunState, mod: ModId): void {
   state.draftOptions = null;
   state.chosenMod = null;
   state.editSel = null;
+  // Deck edits may have moved cards; deal fresh walk orders for the new sector.
+  for (const c of run.casters) {
+    refreshOrder(run, c);
+    c.pointer = 0;
+  }
   enterSector(run, run.sectorIndex + 1);
   state.phase = "playing";
 }
@@ -173,12 +195,14 @@ function handleDraftClick(
     advanceFromDraft(state, run, opts[state.chosenMod]);
     return;
   }
-  // Deck slots.
-  const caster = run.caster;
-  for (let i = 0; i < caster.slots.length; i++) {
-    if (inRect(mx, my, deckSlotRect(i, caster.slots.length))) {
-      clickDeckSlot(state, run, i);
-      return;
+  // Deck slots — one row per carried caster.
+  for (let row = 0; row < run.casters.length; row++) {
+    const caster = run.casters[row];
+    for (let i = 0; i < caster.slots.length; i++) {
+      if (inRect(mx, my, deckSlotRect(row, i, caster.slots.length))) {
+        clickDeckSlot(state, run, row, i);
+        return;
+      }
     }
   }
   // Inventory tiles (one extra tile acts as the unequip target).
@@ -191,17 +215,19 @@ function handleDraftClick(
   state.editSel = null;
 }
 
-function clickDeckSlot(state: GameState, run: RunState, i: number): void {
+function clickDeckSlot(state: GameState, run: RunState, row: number, i: number): void {
   const sel = state.editSel;
-  const slots = run.caster.slots;
+  const slots = run.casters[row].slots;
   if (sel === null) {
-    if (slots[i] !== null) state.editSel = { zone: "slot", index: i };
+    if (slots[i] !== null) state.editSel = { zone: "slot", caster: row, index: i };
     return;
   }
   if (sel.zone === "slot") {
-    if (sel.index !== i) {
-      const tmp = slots[sel.index];
-      slots[sel.index] = slots[i];
+    // Swap between any two slots, same caster or across casters.
+    const from = run.casters[sel.caster].slots;
+    if (!(sel.caster === row && sel.index === i)) {
+      const tmp = from[sel.index];
+      from[sel.index] = slots[i];
       slots[i] = tmp;
     }
     state.editSel = null;
@@ -221,15 +247,16 @@ function clickDeckSlot(state: GameState, run: RunState, i: number): void {
 function clickInventory(state: GameState, run: RunState, i: number): void {
   const sel = state.editSel;
   if (sel === null) {
-    if (i < run.inventory.length) state.editSel = { zone: "inv", index: i };
+    if (i < run.inventory.length) state.editSel = { zone: "inv", caster: 0, index: i };
     return;
   }
   if (sel.zone === "slot") {
     // Unequip the selected slot card into the inventory.
-    const card = run.caster.slots[sel.index];
+    const slots = run.casters[sel.caster].slots;
+    const card = slots[sel.index];
     if (card !== null) {
       run.inventory.push(card);
-      run.caster.slots[sel.index] = null;
+      slots[sel.index] = null;
     }
   }
   state.editSel = null;
@@ -342,13 +369,24 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   }
   p.iframes = Math.max(0, p.iframes - dt);
 
-  // Casting: hold the mouse to fire at the caster's cadence.
-  run.caster.castTimer = Math.max(0, run.caster.castTimer - dt);
-  if (input.mouseHeld() && run.caster.castTimer <= 0) {
+  // Q swaps casters. Each caster keeps its own cast/recharge timer, so
+  // weaving between two decks to cover a recharge is intended tech.
+  if (input.takePress("KeyQ") && run.casters.length > 1) {
+    run.activeCaster = 1 - run.activeCaster;
+    addBurst(run, p.x, p.y, FRAMES[run.casters[run.activeCaster].frame].color, 6);
+  }
+
+  // Casting: hold the mouse to fire at the active caster's cadence.
+  // (Both casters' timers tick down — the holstered one recharges too.)
+  for (const cst of run.casters) {
+    cst.castTimer = Math.max(0, cst.castTimer - dt);
+  }
+  const active = run.casters[run.activeCaster];
+  if (input.mouseHeld() && active.castTimer <= 0) {
     const m = input.mouse();
     const aimX = run.camX + (m.x - config.width / 2);
     const aimY = run.camY + (m.y - config.height / 2);
-    castFromDeck(run, aimX, aimY);
+    castFromDeck(run, active, aimX, aimY);
   }
 
   updateProjectiles(run, sec, dt);
@@ -375,80 +413,185 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
 
 // --- casting & projectiles -------------------------------------------------
 
-/**
- * Walk the deck from the pointer: fold consecutive modifier cards into the
- * next payload/utility card, cast it, and advance. Wrapping past the end of
- * the deck triggers the recharge delay instead of the (short) cast delay.
- */
-function castFromDeck(run: RunState, aimX: number, aimY: number): void {
-  const c = run.caster;
-  const len = c.slots.length;
-  const mods = emptyCastMods();
-  let payload: CardId | null = null;
-  let idx = c.pointer;
-  let wrapped = false;
+interface DeckWalk {
+  idx: number;
+  scanned: number;
+  wrapped: boolean;
+}
 
-  for (let scanned = 0; scanned < len; scanned++) {
-    const card = c.slots[idx];
-    idx += 1;
-    if (idx >= len) {
-      idx = 0;
-      wrapped = true;
+/** One resolved cast: a payload plus its folded modifiers and any cargo. */
+interface CastEntry {
+  card: CardId;
+  mods: CastMods;
+  cargoCard: CardId | null;
+  cargoMods: CastMods | null;
+}
+
+/**
+ * Advance the walk to the next payload/utility card, folding every modifier
+ * passed over into `mods`. Returns null when the whole deck has been scanned.
+ */
+function takePayload(c: Caster, walk: DeckWalk, mods: CastMods): CardId | null {
+  const len = c.order.length;
+  while (walk.scanned < len) {
+    const slotIdx = c.order[walk.idx];
+    walk.idx += 1;
+    walk.scanned += 1;
+    if (walk.idx >= len) {
+      walk.idx = 0;
+      walk.wrapped = true;
     }
+    const card = c.slots[slotIdx];
     if (card === null) continue;
     const def = CARDS[card];
     if (def.kind === "modifier") {
       applyCastModifier(mods, card);
       continue;
     }
-    payload = card;
-    break;
+    return card;
   }
+  return null;
+}
 
-  c.pointer = idx;
-  if (payload === null) {
+/** Shuffler frames re-deal their walk order on every recharge. */
+function refreshOrder(run: RunState, c: Caster): void {
+  c.order = FRAMES[c.frame].shuffle
+    ? shuffle(run.rng, identityOrder(c.slots.length))
+    : identityOrder(c.slots.length);
+}
+
+/**
+ * Walk the deck from the pointer and cast. Modifiers fold into the next
+ * payload; Multicast pulls extra payloads into the same cast; trigger
+ * payloads consume the FOLLOWING card (with its modifiers) as cargo, cast
+ * when the trigger lands. Wrapping the deck costs the recharge delay.
+ */
+function castFromDeck(run: RunState, c: Caster, aimX: number, aimY: number): void {
+  const frame = FRAMES[c.frame];
+  const walk: DeckWalk = { idx: c.pointer, scanned: 0, wrapped: false };
+
+  const baseMods = emptyCastMods();
+  const first = takePayload(c, walk, baseMods);
+  if (first === null) {
     // Deck holds no castable card (empty or modifiers only): brief idle spin.
-    c.castTimer = c.rechargeTime;
+    c.pointer = 0;
+    c.castTimer = frame.rechargeTime;
     c.recharging = true;
+    refreshOrder(run, c);
     return;
   }
 
-  const def = CARDS[payload];
-  c.castTimer = wrapped ? c.rechargeTime + def.delayAdd : c.castDelay + def.delayAdd;
-  c.recharging = wrapped;
+  const casts: CastEntry[] = [{ card: first, mods: baseMods, cargoCard: null, cargoMods: null }];
+  for (let k = 0; k < baseMods.extra && casts.length < 3; k++) {
+    const m2 = emptyCastMods();
+    const p2 = takePayload(c, walk, m2);
+    if (p2 === null) break;
+    casts.push({ card: p2, mods: m2, cargoCard: null, cargoMods: null });
+  }
+
+  // Trigger payloads pick up their cargo (one nesting level deep).
+  let maxDelay = 0;
+  for (const entry of casts) {
+    const def = CARDS[entry.card];
+    maxDelay = Math.max(maxDelay, def.delayAdd);
+    if (def.trigger !== null) {
+      const cm = emptyCastMods();
+      const cargo = takePayload(c, walk, cm);
+      if (cargo !== null) {
+        entry.cargoCard = cargo;
+        entry.cargoMods = cm;
+      }
+    }
+  }
+
+  c.pointer = walk.idx;
+  c.castTimer = (walk.wrapped ? frame.rechargeTime : frame.castDelay) + maxDelay;
+  c.recharging = walk.wrapped;
+  if (walk.wrapped) refreshOrder(run, c);
 
   const p = run.player;
   const baseAngle = Math.atan2(aimY - p.y, aimX - p.x);
-
-  if (payload === "blink") {
-    blinkPlayer(run, baseAngle);
-    return;
+  for (const entry of casts) {
+    if (entry.card === "blink") {
+      blinkPlayer(run, baseAngle);
+    } else {
+      spawnShots(run, p.x, p.y, baseAngle, entry, frame.dmgBonus);
+    }
   }
+  addBurst(run, p.x + Math.cos(baseAngle) * 14, p.y + Math.sin(baseAngle) * 14, CARDS[first].color, 3);
+}
 
+/** Spawn the projectiles for one cast entry from (x, y) toward `angle`. */
+function spawnShots(
+  run: RunState,
+  x: number,
+  y: number,
+  angle: number,
+  entry: CastEntry,
+  dmgBonus: number,
+): void {
+  const def = CARDS[entry.card];
+  const mods = entry.mods;
+  const sec = run.sector;
   const shots = def.pellets * mods.count;
   const halfSpread = def.spread * (def.pellets - 1) + (mods.count > 1 ? 0.05 : 0);
-  const sec = run.sector;
   for (let i = 0; i < shots; i++) {
     if (sec.projectiles.length >= config.caster.projectileCap) break;
     const t = shots === 1 ? 0 : (i / (shots - 1)) * 2 - 1; // -1 .. 1 across the fan
-    const angle = baseAngle + t * halfSpread;
+    const a = angle + t * halfSpread;
     const speed = def.speed * mods.speedMult;
+    // Only the first pellet of a trigger shot carries the cargo — one bomb,
+    // not a bomb per pellet.
+    const carry = i === 0 ? entry.cargoCard : null;
     sec.projectiles.push({
-      x: p.x + Math.cos(angle) * (config.player.radius + 6),
-      y: p.y + Math.sin(angle) * (config.player.radius + 6),
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
+      x: x + Math.cos(a) * (config.player.radius + 6),
+      y: y + Math.sin(a) * (config.player.radius + 6),
+      vx: Math.cos(a) * speed,
+      vy: Math.sin(a) * speed,
       r: 4,
-      dmg: def.dmg + mods.dmgAdd,
-      card: payload,
+      dmg: def.dmg + mods.dmgAdd + dmgBonus,
+      card: entry.card,
       life: def.life,
       bounces: mods.bounces,
       pierce: mods.pierce,
       homing: def.homing,
+      cargoCard: carry,
+      cargoMods: carry !== null ? entry.cargoMods : null,
+      triggerTimer: def.trigger === "timer" ? def.triggerTime : -1,
+      dmgBonus,
       hitIds: [],
     });
   }
-  addBurst(run, p.x + Math.cos(baseAngle) * 14, p.y + Math.sin(baseAngle) * 14, def.color, 3);
+}
+
+/** Release a trigger projectile's cargo at (x, y), continuing along `angle`. */
+function releaseCargo(
+  run: RunState,
+  x: number,
+  y: number,
+  angle: number,
+  cargoCard: CardId,
+  cargoMods: CastMods | null,
+  dmgBonus: number,
+): void {
+  addBurst(run, x, y, CARDS[cargoCard].color, 8);
+  if (cargoCard === "blink") {
+    // Teleport-bolt tech: blink as cargo moves the player to the impact point.
+    const p = run.player;
+    addBurst(run, p.x, p.y, config.colors.player, 8);
+    p.x = clamp(x, config.player.radius, run.sector.w - config.player.radius);
+    p.y = clamp(y, config.player.radius, run.sector.h - config.player.radius);
+    p.iframes = Math.max(p.iframes, 0.15);
+    return;
+  }
+  const entry: CastEntry = {
+    card: cargoCard,
+    mods: cargoMods ?? emptyCastMods(),
+    // Cargo never nests another trigger — one level deep, by design.
+    cargoCard: null,
+    cargoMods: null,
+  };
+  spawnShots(run, x, y, angle, entry, dmgBonus);
 }
 
 /** Short teleport toward the aim, stopped by terrain. */
@@ -477,11 +620,26 @@ function blinkPlayer(run: RunState, angle: number): void {
 function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
   for (let i = sec.projectiles.length - 1; i >= 0; i--) {
     const pr = sec.projectiles[i];
+    const heading = Math.atan2(pr.vy, pr.vx);
+
     pr.life -= dt;
     if (pr.life <= 0) {
+      if (pr.cargoCard !== null) {
+        releaseCargo(run, pr.x, pr.y, heading, pr.cargoCard, pr.cargoMods, pr.dmgBonus);
+      }
       addBurst(run, pr.x, pr.y, CARDS[pr.card].color, 4);
       sec.projectiles.splice(i, 1);
       continue;
+    }
+
+    // Timer triggers release their cargo mid-flight and are spent doing it.
+    if (pr.triggerTimer > 0) {
+      pr.triggerTimer -= dt;
+      if (pr.triggerTimer <= 0 && pr.cargoCard !== null) {
+        releaseCargo(run, pr.x, pr.y, heading, pr.cargoCard, pr.cargoMods, pr.dmgBonus);
+        sec.projectiles.splice(i, 1);
+        continue;
+      }
     }
 
     // Homing payloads curve toward the nearest agent in range.
@@ -536,6 +694,9 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
         pr.y = oldY;
         addBurst(run, pr.x, pr.y, CARDS[pr.card].color, 3);
       } else {
+        if (pr.cargoCard !== null) {
+          releaseCargo(run, oldX, oldY, heading, pr.cargoCard, pr.cargoMods, pr.dmgBonus);
+        }
         addBurst(run, oldX, oldY, CARDS[pr.card].color, 5);
         sec.projectiles.splice(i, 1);
       }
@@ -558,6 +719,9 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
       damageHazard(run, sec, h, pr.dmg);
       addBurst(run, pr.x, pr.y, CARDS[pr.card].color, 5);
       if (!pr.pierce) {
+        if (pr.cargoCard !== null) {
+          releaseCargo(run, pr.x, pr.y, heading, pr.cargoCard, pr.cargoMods, pr.dmgBonus);
+        }
         sec.projectiles.splice(i, 1);
         break;
       }
@@ -815,6 +979,22 @@ function damagePlayer(state: GameState, run: RunState, nx: number, ny: number): 
   }
 }
 
+/**
+ * A found frame becomes a second caster; with both hands full it replaces the
+ * HOLSTERED caster, returning that deck's cards to the inventory.
+ */
+function pickUpFrame(run: RunState, frame: FrameId): void {
+  if (run.casters.length < MAX_CASTERS) {
+    run.casters.push(createCaster(frame));
+    return;
+  }
+  const idx = 1 - run.activeCaster;
+  for (const card of run.casters[idx].slots) {
+    if (card !== null) run.inventory.push(card);
+  }
+  run.casters[idx] = createCaster(frame);
+}
+
 function collectPickups(state: GameState, run: RunState): void {
   const p = run.player;
   const sec = run.sector;
@@ -835,6 +1015,15 @@ function collectPickups(state: GameState, run: RunState): void {
       sec.cardNodes.splice(i, 1);
       run.inventory.push(node.card);
       addBurst(run, node.x, node.y, CARDS[node.card].color, 16);
+    }
+  }
+
+  for (let i = sec.frameNodes.length - 1; i >= 0; i--) {
+    const node = sec.frameNodes[i];
+    if (dist(node.x, node.y, p.x, p.y) < s.pickupRadius + 6) {
+      sec.frameNodes.splice(i, 1);
+      pickUpFrame(run, node.frame);
+      addBurst(run, node.x, node.y, FRAMES[node.frame].color, 20);
     }
   }
 

@@ -3,10 +3,10 @@
 // hazards, canisters, card pickups, spawn point, and the exit gate. Placement
 // is rejection sampling with clearance rules, deterministic per seed.
 
-import type { CardId } from "./cards";
+import { FOUND_FRAMES, type CardId, type CastMods, type FrameId } from "./cards";
 import { config } from "./config";
 import { clamp, dist, type Rect } from "./physics";
-import { nextFloat, range, shuffle, type Rng } from "./rng";
+import { nextFloat, pick, range, shuffle, type Rng } from "./rng";
 import {
   createSubstrate,
   solidInCircle,
@@ -33,6 +33,13 @@ export interface CardNode {
   card: CardId;
 }
 
+/** A caster-frame pickup in the world. */
+export interface FrameNode {
+  x: number;
+  y: number;
+  frame: FrameId;
+}
+
 /** A live projectile cast from the player's caster. */
 export interface Projectile {
   x: number;
@@ -46,6 +53,13 @@ export interface Projectile {
   bounces: number;
   pierce: boolean;
   homing: boolean;
+  /** Trigger payloads: the card (+folded mods) cast when this one lands. */
+  cargoCard: CardId | null;
+  cargoMods: CastMods | null;
+  /** Seconds until a timer trigger releases its cargo; -1 = on impact only. */
+  triggerTimer: number;
+  /** Frame damage bonus, inherited by cargo casts. */
+  dmgBonus: number;
   /** Hazard ids already damaged (so pierce can't multi-hit per frame). */
   hitIds: number[];
 }
@@ -81,6 +95,7 @@ export interface SectorState {
   hazards: Hazard[];
   canisters: Canister[];
   cardNodes: CardNode[];
+  frameNodes: FrameNode[];
   projectiles: Projectile[];
   rings: Ring[];
   gate: Gate;
@@ -172,6 +187,21 @@ export function generateSector(rng: Rng, index: number): SectorState {
       if (dist(x, y, gate.x, gate.y) < 160) continue;
       if (solidInCircle(substrate, x, y, 24)) continue;
       canisters.push({ x, y, r: config.canister.r, fuse: -1 });
+      break;
+    }
+  }
+
+  // Caster-frame pickups (sectors 2 and 4 guarantee one).
+  const frameNodes: FrameNode[] = [];
+  for (let i = 0; i < def.frames; i++) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const x = range(rng, 160, w - 160);
+      const y = range(rng, 160, h - 160);
+      if (dist(x, y, spawn.x, spawn.y) < 360) continue;
+      if (dist(x, y, gate.x, gate.y) < 200) continue;
+      if (solidInCircle(substrate, x, y, 28)) continue;
+      if (cardNodes.some((n) => dist(n.x, n.y, x, y) < 220)) continue;
+      frameNodes.push({ x, y, frame: pick(rng, FOUND_FRAMES) });
       break;
     }
   }
@@ -290,6 +320,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
     hazards,
     canisters,
     cardNodes,
+    frameNodes,
     projectiles: [],
     rings: [],
     gate,
@@ -332,8 +363,8 @@ function placeMoving(
  */
 function rollCardPicks(rng: Rng, index: number, count: number, cacheCount: number): CardId[] {
   const payloads: CardId[] = ["burst", "slug", "dart"];
-  const full: CardId[] = ["burst", "slug", "dart", "twin", "haste", "bounce", "pierce", "heavy", "blink"];
-  const strong: CardId[] = ["twin", "pierce", "blink", "dart", "heavy"];
+  const full: CardId[] = ["burst", "slug", "dart", "sparktrigger", "timertrigger", "twin", "haste", "bounce", "pierce", "heavy", "multi", "blink"];
+  const strong: CardId[] = ["sparktrigger", "timertrigger", "multi", "twin", "pierce", "blink", "heavy"];
   const pool = shuffle(rng, (index === 0 ? payloads : full).slice());
   const cachePool = shuffle(rng, strong.slice());
   const picks: CardId[] = [];

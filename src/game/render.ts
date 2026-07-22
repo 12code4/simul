@@ -1,7 +1,7 @@
 // Drawing only. Must stay read-only with respect to state — all animation
 // derives from values the simulation already stores (times, phases, ages).
 
-import { CARDS, type CardId } from "./cards";
+import { CARDS, FRAMES, type CardId, type Caster } from "./cards";
 import { config } from "./config";
 import { META_TRACKS, nextCost } from "./meta";
 import { MODS, type ModId } from "./mods";
@@ -187,6 +187,30 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
     text(ctx, def.glyph, node.x, node.y + bob, 11, def.color, "center", true, 700);
   }
 
+  // Caster-frame pickups: hexagonal chips.
+  for (const node of sec.frameNodes) {
+    const def = FRAMES[node.frame];
+    const bob = Math.sin(run.time * 1.8 + node.y * 0.01) * 3;
+    ctx.globalAlpha = 0.2;
+    fillCircle(ctx, node.x, node.y + bob, 22, def.color);
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2 - Math.PI / 2;
+      const px = node.x + Math.cos(a) * 14;
+      const py = node.y + bob + Math.sin(a) * 14;
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = C.panel;
+    ctx.fill();
+    ctx.strokeStyle = def.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    text(ctx, def.name[0], node.x, node.y + bob, 12, def.color, "center", true, 800);
+  }
+
   // Data shards: rotating diamonds.
   sec.shards.forEach((sh, i) => {
     ctx.save();
@@ -245,13 +269,16 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
     ctx.globalAlpha = 1;
   }
 
-  // Projectiles.
+  // Projectiles. Cargo-carrying trigger shots get a telltale ring.
   for (const pr of sec.projectiles) {
     const def = CARDS[pr.card];
     ctx.globalAlpha = 0.25;
     fillCircle(ctx, pr.x, pr.y, pr.r + 4, def.color);
     ctx.globalAlpha = 1;
     fillCircle(ctx, pr.x, pr.y, pr.r, def.color);
+    if (pr.cargoCard !== null) {
+      strokeCircle(ctx, pr.x, pr.y, pr.r + 6, CARDS[pr.cargoCard].color, 1.5);
+    }
   }
 
   // Hazards.
@@ -408,9 +435,11 @@ function drawHud(ctx: CanvasRenderingContext2D, run: RunState): void {
   );
 }
 
-/** The deck readout: slot tiles, deck pointer, and the cast/recharge bar. */
+/** The deck readout: active caster's tiles, pointer, cast bar — plus a small
+ * holstered-caster strip with the Q hint when a second frame is carried. */
 function drawCasterStrip(ctx: CanvasRenderingContext2D, run: RunState): void {
-  const caster = run.caster;
+  const caster = run.casters[run.activeCaster];
+  const frame = FRAMES[caster.frame];
   const tile = 26;
   const gap = 6;
   const n = caster.slots.length;
@@ -418,15 +447,18 @@ function drawCasterStrip(ctx: CanvasRenderingContext2D, run: RunState): void {
   const x0 = config.width / 2 - total / 2;
   const y = config.height - 44;
 
+  text(ctx, frame.name.toUpperCase(), x0 - 10, y + tile / 2, 9, frame.color, "right", true, 700);
+
   caster.slots.forEach((card, i) => {
     const x = x0 + i * (tile + gap);
     ctx.fillStyle = C.panel;
     ctx.globalAlpha = 0.85;
     ctx.fillRect(x, y, tile, tile);
     ctx.globalAlpha = 1;
-    const active = i === caster.pointer;
-    ctx.strokeStyle = active ? C.player : C.wallEdge;
-    ctx.lineWidth = active ? 2 : 1;
+    // Highlight where the NEXT walk starts (order-aware for shufflers).
+    const isNext = i === caster.order[caster.pointer];
+    ctx.strokeStyle = isNext ? C.player : C.wallEdge;
+    ctx.lineWidth = isNext ? 2 : 1;
     ctx.strokeRect(x + 0.5, y + 0.5, tile - 1, tile - 1);
     if (card !== null) {
       const def = CARDS[card];
@@ -435,14 +467,37 @@ function drawCasterStrip(ctx: CanvasRenderingContext2D, run: RunState): void {
   });
 
   // Cast/recharge progress under the strip.
-  const barW = total;
-  const denom = caster.recharging ? caster.rechargeTime : Math.max(0.001, caster.castDelay);
+  const denom = caster.recharging ? frame.rechargeTime : Math.max(0.001, frame.castDelay);
   const frac = 1 - Math.min(1, caster.castTimer / Math.max(0.001, denom));
   ctx.strokeStyle = C.hudDim;
   ctx.lineWidth = 1;
-  ctx.strokeRect(x0 + 0.5, y + tile + 4.5, barW, 4);
+  ctx.strokeRect(x0 + 0.5, y + tile + 4.5, total, 4);
   ctx.fillStyle = caster.recharging ? C.canister : C.playerCore;
-  ctx.fillRect(x0 + 1, y + tile + 5, Math.max(0, frac) * (barW - 1), 3);
+  ctx.fillRect(x0 + 1, y + tile + 5, Math.max(0, frac) * (total - 1), 3);
+
+  // Holstered caster: mini strip above, with the swap hint.
+  if (run.casters.length > 1) {
+    const other = run.casters[1 - run.activeCaster];
+    const oframe = FRAMES[other.frame];
+    const mini = 14;
+    const mtotal = other.slots.length * (mini + 3) - 3;
+    const mx0 = config.width / 2 - mtotal / 2;
+    const my = y - 22;
+    ctx.globalAlpha = 0.55;
+    other.slots.forEach((card, i) => {
+      const x = mx0 + i * (mini + 3);
+      ctx.fillStyle = C.panel;
+      ctx.fillRect(x, my, mini, mini);
+      ctx.strokeStyle = oframe.color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, my + 0.5, mini - 1, mini - 1);
+      if (card !== null) {
+        text(ctx, CARDS[card].glyph, x + mini / 2, my + mini / 2 + 0.5, 6.5, CARDS[card].color, "center", true, 700);
+      }
+    });
+    text(ctx, "Q", mx0 - 10, my + mini / 2, 10, C.hudText, "right", true, 800);
+    ctx.globalAlpha = 1;
+  }
 }
 
 /** Off-screen objective hints: nearest shard (gold) and the open gate (green). */
@@ -608,15 +663,21 @@ function drawDraft(
     text(ctx, mod.desc, r.x + r.w / 2, r.y + 76, 11.5, C.hudDim, "center");
   });
 
-  // Deck editor.
-  text(ctx, "CASTER — click a card, then a destination (deck order = cast order)", cx, 300, 12, C.hudText, "center", true);
-  run.caster.slots.forEach((card, i) => {
-    const r = deckSlotRect(i, run.caster.slots.length);
-    const sel = state.editSel;
-    drawCardTile(ctx, r, card, sel !== null && sel.zone === "slot" && sel.index === i, false);
+  // Deck editor — one row per carried caster.
+  text(ctx, "CASTERS — click a card, then a destination (deck order = cast order)", cx, 278, 12, C.hudText, "center", true);
+  run.casters.forEach((caster: Caster, row: number) => {
+    const frame = FRAMES[caster.frame];
+    const first = deckSlotRect(row, 0, caster.slots.length);
+    const label = row === run.activeCaster ? `${frame.name} · ACTIVE` : `${frame.name} · Q`;
+    text(ctx, label.toUpperCase(), first.x - 12, first.y + first.h / 2, 9, frame.color, "right", true, 700);
+    caster.slots.forEach((card, i) => {
+      const r = deckSlotRect(row, i, caster.slots.length);
+      const sel = state.editSel;
+      drawCardTile(ctx, r, card, sel !== null && sel.zone === "slot" && sel.caster === row && sel.index === i, false);
+    });
   });
 
-  text(ctx, `inventory (${run.inventory.length})`, cx, INV_Y - 14, 11, C.hudDim, "center", true);
+  text(ctx, `inventory (${run.inventory.length})`, cx, INV_Y - 12, 11, C.hudDim, "center", true);
   const invTiles = Math.max(run.inventory.length + 1, 1);
   for (let i = 0; i < invTiles; i++) {
     const r = inventoryRect(i);
@@ -625,7 +686,7 @@ function drawDraft(
     drawCardTile(ctx, r, card, sel !== null && sel.zone === "inv" && sel.index === i, false);
   }
   if (state.editSel?.zone === "slot") {
-    text(ctx, "click an empty inventory tile to unequip", cx, INV_Y + CARD_TILE + 26, 10.5, C.hudDim, "center", true, 400);
+    text(ctx, "click an empty inventory tile to unequip", cx, INV_Y + CARD_TILE + 22, 10.5, C.hudDim, "center", true, 400);
   }
 
   // Continue button.

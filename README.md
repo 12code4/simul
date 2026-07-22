@@ -16,9 +16,10 @@ Built with **TypeScript + Vite** on a plain `<canvas>` — no game engine.
 
 ## Status
 
-🎮 **v0.4 "The Caster".** Full run loop, card combat, deck editing, and destructible
-terrain all work end to end. Trigger cards, balance, and audio are the current
-frontier — see the [GDD](docs/GDD.md).
+🎮 **v0.5 "Trigger Protocol".** Full run loop, card combat with trigger cards and
+Multicast, findable Caster Frames (carry two, swap with Q), deck editing, and
+destructible terrain. Balance and audio are the current frontier — see the
+[GDD](docs/GDD.md).
 
 ## Quick start
 
@@ -36,15 +37,19 @@ npm run dev       # start the dev server, open the printed URL, press ENTER to r
 | WASD / arrows | Thrust |
 | Mouse | Aim — hold left button to cast |
 | Space or Shift | Dash — invulnerable while dashing |
+| Q | Swap casters (when you've found a second frame) |
 | Esc | Pause |
 | Enter / 1–3 / click | Menus: confirm, buy upgrades, pick mods, edit your deck |
 
 Collect all **gold shards** to open the **exit gate**. Pick up **cards** — some are
 sealed in destructible caches, and every cache has a canister next to it: shoot it or
 dash into it (you're invulnerable while dashing). Between sectors: draft a mod and
-reorder your deck — **deck order is cast order**. Green motes are flux; kills drop
-more; it all banks into **cores** for permanent upgrades when the run ends, win or
-lose. Dev hooks for testing: `?seed=<hex>&sector=<1-5>`.
+reorder your deck — **deck order is cast order**. Trigger cards carry the next card
+as cargo and cast it where they land (try Blink as cargo). Hexagonal **frame**
+pickups are whole new casters with different personalities — carry two, swap with Q.
+Green motes are flux; kills drop more; it all banks into **cores** for permanent
+upgrades when the run ends, win or lose. Dev hooks for testing:
+`?seed=<hex>&sector=<1-5>&deck=<cards>`.
 
 ### Other commands
 

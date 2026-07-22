@@ -56,17 +56,27 @@ cleaner clears.
 ## 5. Mechanics & systems
 
 ### The Caster (the core system)
-- **Caster = deck**: 5 ordered slots, cast delay ~0.26s (+ per-card), recharge ~0.9s
-  when the deck pointer wraps. Deck order = cast order.
-- **Cast = deck walk**: each trigger pull reads from the pointer; **modifier cards
-  fold into the next payload**, which then fires. Modifiers stack.
+- **Caster = Frame + deck**: a Frame sets slot count and cadence; slots hold cards
+  in cast order. **Cast = deck walk**: modifier cards fold into the next payload,
+  which then fires; wrapping the deck costs the recharge. Modifiers stack.
+- **Frames (v0.5)** — casters are loot, Noita-wand style. Standard (5 slots,
+  baseline), Lattice (7 slots, ponderous recharge), Snubnose (3 slots, quick,
+  +1 dmg), Shuffler (random seeded cast order re-dealt each recharge, very fast).
+  Carry **two casters, swap with Q** — each keeps its own timers, so weaving
+  between decks to cover a recharge is intended tech. Frames found in sectors 2 & 4;
+  picking up a third replaces the holstered caster (its cards return to inventory).
+- **Trigger cards (v0.5)** — the Noita mechanic: a trigger payload consumes the
+  NEXT deck card (with its modifiers) as cargo and casts it on arrival. Spark
+  Trigger (on impact), Timer Trigger (mid-flight, 0.35s). One nesting level.
+  **Blink as cargo teleports you to the impact point** — the teleport bolt.
+- **Multicast (v0.5)**: modifier that casts the next 2 payloads simultaneously.
 - **Payloads**: Bolt (starter), Burst (3-pellet fan), Slug (3 dmg, slow), Seeker
-  Dart (homing). **Utility**: Blink (teleport toward aim, wall-blocked, brief
-  i-frames). **Modifiers**: Twin Cast (×2), Haste (×1.6 speed), Ricochet (+2 wall
-  bounces), Pierce (through agents), Heavy Round (+1 dmg, slower).
+  Dart (homing), Spark/Timer Trigger. **Utility**: Blink. **Modifiers**: Twin Cast
+  (×2), Haste (×1.6 speed), Ricochet (+2 bounces), Pierce, Heavy Round (+1 dmg,
+  slower), Multicast. Pool: 13 cards + 4 frames.
 - **Acquisition**: cards are found in the world — open nodes, plus **caches** sealed
   in destructible wall rings. *Every cache spawns with a canister beside it* — the
-  key is always in the lock. Deck editing happens between sectors.
+  key is always in the lock. Deck editing happens between sectors (both casters).
 - Projectiles substep (≤8px/check) so hasted shots can't tunnel through walls.
 
 ### World & objective
@@ -103,6 +113,7 @@ run RNG.
 | WASD / arrows | Thrust |
 | Mouse | Aim; hold left button to cast |
 | Space or Shift | Dash (invulnerable) |
+| Q | Swap casters (when carrying two) |
 | Esc | Pause / resume |
 | Enter | Confirm / start / retry / continue |
 | 1–3 / click | Buy upgrades, pick draft mods, edit the deck |
@@ -128,11 +139,12 @@ Slug, green currency/Dart, warm hazards/canisters, purple modifiers. No audio ye
 - Destructible terrain via explosions; chaining canisters
 - Enemy HP/kills/flux drops; 5 big open sectors; mouse aim; edge arrows
 
+**Shipped in v0.5 ("Trigger Protocol"):** trigger cards (Spark/Timer, incl. the
+Blink teleport-bolt), Multicast, and Caster Frames with two-caster carry + Q swap.
+
 **Later (deck-first roadmap):**
-- **Trigger cards** — payloads that cast another card on impact (nested casts);
-  the deepest Noita mechanic and our next big feature
-- More card archetypes: multicast fans, orbitals, delayed/echo casts, deck-cycling
-  utilities; possibly caster stats as findable upgrades (slots, cast delay)
+- Deeper nesting for triggers (trigger-in-trigger), orbitals, delayed/echo casts,
+  deck-cycling utilities; more frames (a mana-like constraint frame?)
 - Audio (SFX + music); gamepad; accessibility pass; daily seed; balance from playtests
 
 ## 10. Target & platform
