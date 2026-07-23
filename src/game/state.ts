@@ -8,9 +8,11 @@ import { createRng, type Rng } from "./rng";
 import { loadMeta, type MetaState } from "./meta";
 import { generateSector, type SectorState } from "./sector";
 import type { ModId } from "./mods";
-import { CARDS, createStarterCaster, type CardId, type Caster } from "./cards";
+import { CARDS, createStarterCaster, type CardId, type Caster, type FrameId } from "./cards";
 
-export const MAX_CASTERS = 2;
+/** Carry up to 3 casters mid-sector — but a new sector admits only 2. */
+export const MAX_CASTERS = 3;
+export const ENTER_CASTERS = 2;
 
 export type Phase = "title" | "playing" | "draft" | "paused" | "gameover" | "victory";
 
@@ -113,6 +115,10 @@ export interface GameState {
   /** Mod picked on the sector-clear screen; applied on continue. */
   chosenMod: number | null;
   editSel: EditSelection | null;
+  /** What the mouse is over on the sector-clear screen (tooltips). */
+  hover: { kind: "card"; card: CardId } | { kind: "frame"; frame: FrameId } | null;
+  hoverX: number;
+  hoverY: number;
   outcome: Outcome | null;
   /** Wall-clock-ish UI time for menu pulses; advances every update. */
   uiTime: number;
@@ -151,6 +157,9 @@ export function createInitialState(): GameState {
     menuIndex: 0,
     chosenMod: null,
     editSel: null,
+    hover: null,
+    hoverX: 0,
+    hoverY: 0,
     outcome: null,
     uiTime: 0,
     dev: readDevParams(),

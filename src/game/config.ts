@@ -83,17 +83,36 @@ export const config = {
     killDrop: 1,
   },
 
+  // The spawn director (Risk of Rain-style). Each sector's hazard counts in
+  // the table below are its 100% "saturation" — the director continuously
+  // tops the population up toward saturation(t) * base:
+  //   0–20s: 70% (exploration grace) → 100% at 60s → 150% at 120s → 250%
+  //   (the cap) at 240s, linear between steps.
+  director: {
+    graceSat: 0.7,
+    graceUntil: 20,
+    fullAt: 60,
+    highSat: 1.5,
+    highAt: 120,
+    maxSat: 2.5,
+    maxAt: 240,
+    /** Minimum seconds between director spawns while under target. */
+    spawnInterval: 0.9,
+    /** Initial population at sector entry, as a fraction of base. */
+    initialSat: 0.7,
+  },
+
   // One entry per sector of a run; difficulty escalates down the table.
-  // "heat" spawns an extra drifter at the arena edge every heatInterval seconds
-  // (up to heatCap). cardNodes are card pickups scattered in the open; caches
-  // are card pickups sealed inside a destructible wall ring — every cache gets
-  // a canister placed within reach as its key.
+  // Hazard counts are the 100%-saturation baseline AND the spawn-mix weights
+  // for the director. cardNodes are card pickups scattered in the open;
+  // caches are card pickups sealed inside a destructible wall ring — every
+  // cache gets a canister placed within reach as its key.
   sectors: [
-    { name: "CALIBRATION FIELD", w: 1800, h: 1300, walls: 8,  shards: 4, motes: 18, drifters: 5,  seekers: 0, sweepers: 0, pulsars: 0, canisters: 2, cardNodes: 2, caches: 0, frames: 0, heatInterval: 12, heatCap: 4 },
-    { name: "RELAY GRID",        w: 2000, h: 1400, walls: 9,  shards: 5, motes: 21, drifters: 6,  seekers: 1, sweepers: 1, pulsars: 0, canisters: 3, cardNodes: 2, caches: 1, frames: 1, heatInterval: 11, heatCap: 5 },
-    { name: "SHATTER YARD",      w: 2200, h: 1500, walls: 10, shards: 6, motes: 24, drifters: 8,  seekers: 2, sweepers: 2, pulsars: 1, canisters: 6, cardNodes: 3, caches: 1, frames: 0, heatInterval: 10, heatCap: 6 },
-    { name: "SENTINEL WORKS",    w: 2400, h: 1650, walls: 11, shards: 7, motes: 27, drifters: 9,  seekers: 3, sweepers: 3, pulsars: 3, canisters: 4, cardNodes: 3, caches: 2, frames: 1, heatInterval: 9,  heatCap: 7 },
-    { name: "TERMINUS",          w: 2600, h: 1800, walls: 12, shards: 8, motes: 30, drifters: 10, seekers: 5, sweepers: 4, pulsars: 4, canisters: 6, cardNodes: 4, caches: 2, frames: 0, heatInterval: 8,  heatCap: 8 },
+    { name: "CALIBRATION FIELD", w: 1800, h: 1300, walls: 8,  shards: 4, motes: 18, drifters: 5,  seekers: 0, sweepers: 0, pulsars: 0, canisters: 2, cardNodes: 2, caches: 0, frames: 0 },
+    { name: "RELAY GRID",        w: 2000, h: 1400, walls: 9,  shards: 5, motes: 21, drifters: 6,  seekers: 1, sweepers: 1, pulsars: 0, canisters: 3, cardNodes: 2, caches: 1, frames: 1 },
+    { name: "SHATTER YARD",      w: 2200, h: 1500, walls: 10, shards: 6, motes: 24, drifters: 8,  seekers: 2, sweepers: 2, pulsars: 1, canisters: 6, cardNodes: 3, caches: 1, frames: 0 },
+    { name: "SENTINEL WORKS",    w: 2400, h: 1650, walls: 11, shards: 7, motes: 27, drifters: 9,  seekers: 3, sweepers: 3, pulsars: 3, canisters: 4, cardNodes: 3, caches: 2, frames: 1 },
+    { name: "TERMINUS",          w: 2600, h: 1800, walls: 12, shards: 8, motes: 30, drifters: 10, seekers: 5, sweepers: 4, pulsars: 4, canisters: 6, cardNodes: 4, caches: 2, frames: 0 },
   ],
 
   flux: {

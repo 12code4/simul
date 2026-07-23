@@ -3,7 +3,8 @@
 > A sandbox roguelite about movement and deck-building. Five big open sectors,
 > a dash with i-frames, and a weapon that is literally a deck of cards.
 
-**▶ Play in your browser: <https://12code4.github.io/simul/>**
+**▶ Play (stable): <https://12code4.github.io/simul/>**
+**🧪 Beta playtest: <https://12code4.github.io/simul/beta/>** — experimental updates land here first.
 
 You pilot a fragile probe through a hostile simulation. Your defense is movement —
 thrust and an invulnerable dash. Your offense is a **Caster**: an ordered deck of

@@ -60,6 +60,24 @@ export function matAt(sub: Substrate, x: number, y: number): number {
   return sub.mat[cellIndexAt(sub, x, y)];
 }
 
+/** Stamp a filled disc of wall cells. Used by generation for organic shapes. */
+export function stampWallDisc(sub: Substrate, x: number, y: number, radius: number): void {
+  const c = sub.cell;
+  const x0 = clamp(Math.floor((x - radius) / c), 0, sub.cols - 1);
+  const y0 = clamp(Math.floor((y - radius) / c), 0, sub.rows - 1);
+  const x1 = clamp(Math.floor((x + radius) / c), 0, sub.cols - 1);
+  const y1 = clamp(Math.floor((y + radius) / c), 0, sub.rows - 1);
+  for (let cy = y0; cy <= y1; cy++) {
+    for (let cx = x0; cx <= x1; cx++) {
+      const px = cx * c + c / 2;
+      const py = cy * c + c / 2;
+      if ((px - x) * (px - x) + (py - y) * (py - y) <= radius * radius) {
+        sub.mat[cy * sub.cols + cx] = MAT.wall;
+      }
+    }
+  }
+}
+
 /** Stamp a world-space rect as walls. Used by generation. */
 export function stampWallRect(
   sub: Substrate,

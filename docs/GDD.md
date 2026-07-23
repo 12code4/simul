@@ -62,9 +62,13 @@ cleaner clears.
 - **Frames (v0.5)** — casters are loot, Noita-wand style. Standard (5 slots,
   baseline), Lattice (7 slots, ponderous recharge), Snubnose (3 slots, quick,
   +1 dmg), Shuffler (random seeded cast order re-dealt each recharge, very fast).
-  Carry **two casters, swap with Q** — each keeps its own timers, so weaving
-  between decks to cover a recharge is intended tech. Frames found in sectors 2 & 4;
-  picking up a third replaces the holstered caster (its cards return to inventory).
+  **Carry up to three casters mid-sector (Q cycles), but a new sector admits
+  only two** — the sector-clear screen forces the discard choice (v0.8). Each
+  caster keeps its own timers, so weaving decks to cover a recharge is intended
+  tech. Frames found in sectors 2 & 4; pickups are blocked while carrying three.
+- **Tooltips (v0.8)**: hovering any card or frame in the deck editor shows its
+  full stats; walking near a card/frame pickup in the world reveals its name
+  and description in place.
 - **Trigger cards (v0.5)** — the Noita mechanic: a trigger payload consumes the
   NEXT deck card (with its modifiers) as cargo and casts it on arrival. Spark
   Trigger (on impact), Timer Trigger (mid-flight, 0.35s). One nesting level.
@@ -83,8 +87,20 @@ cleaner clears.
 - **Destructible terrain**: walls live in a cell grid; canister explosions carve it
   (chain reactions, rubble stains). Trigger canisters by shooting them or dash-touching
   them (you're invulnerable while dashing — it's a tool, not a trap).
-- Objective per sector: collect all shards → gate opens → touch it. Heat spawns extra
-  drifters over time; edge arrows point to offscreen objectives.
+- **Terrain variety (v0.8)**: generation stamps a mix of shapes — rects, long thin
+  bars (corridor makers), L-shapes, organic disc blobs, and pillar fields (dodge
+  lattices). Sweepers and pulsars prefer **chokepoints** (clear spots flanked by
+  terrain on opposite sides).
+- Objective per sector: collect all shards → gate opens → touch it. Edge arrows
+  point to offscreen objectives.
+- **The spawn director (v0.8, Risk of Rain-style)**: the sector table's hazard
+  counts are the 100% "saturation" baseline and the spawn-mix weights. Sectors
+  begin at ~70% saturation for 20s (exploration grace), scale linearly to 100%
+  at 1:00, 150% at 2:00, and cap at 250% at 4:00. The director tops the
+  population back up toward saturation × base (one spawn per ~0.9s when under
+  target) — killing agents buys breathing room, lingering raises the tide.
+  Mobile agents arrive at arena edges; sweepers/pulsars materialize at
+  chokepoints away from the player. Live saturation shows in the HUD readout.
 - 5 sectors, big and open (1800×1300 → 2600×1800): **Calibration Field → Relay Grid →
   Shatter Yard → Sentinel Works → Terminus.** Identity comes from hazard mix and
   canister/cache density.

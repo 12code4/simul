@@ -9,6 +9,26 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.8.0] - 2026-07-23 — "The Director"
+
+### Added
+- **Spawn director** (Risk of Rain-style), replacing the old "heat" drip: sectors
+  open at ~70% enemy saturation for 20s of exploration grace, scale linearly to
+  100% at 1:00, 150% at 2:00, and cap at 250% at 4:00. The director continuously
+  tops the population up toward the target using the sector's composition as
+  spawn weights; mobile agents arrive at arena edges, sweepers/pulsars
+  materialize at chokepoints away from the player. Saturation shows in the HUD.
+- **3-caster carry**: pick up a third frame mid-sector and cycle all three with
+  Q — but the next sector admits only two; the sector-clear screen adds discard
+  buttons and blocks continue until you choose.
+- **Tooltips**: hover any card or frame in the deck editor for full stats;
+  walking near world pickups reveals their name and description.
+- **Terrain variety**: generation now stamps bars, L-shapes, organic blobs, and
+  pillar fields alongside rects; sweepers and pulsars prefer chokepoints.
+
+### Removed
+- The fixed-drip "heat" system (superseded by the director).
+
 ## [0.5.0] - 2026-07-22 — "Trigger Protocol"
 
 The first update built on the deck-first pillar: casting depth.

@@ -8,6 +8,27 @@ material for devlogs or social posts later.
 
 ---
 
+## 2026-07-23 — v0.8 "The Director": playtest-driven fixes for main
+
+- First batch of changes driven directly by playtest feedback (the good kind of
+  backlog). Numbered 0.8 to leave 0.6/0.7 to the beta channel's experiments.
+- **Spawn director** replaces "heat": Risk of Rain-style saturation curve
+  (70% grace for 20s → 100% @1:00 → 150% @2:00 → 250% cap @4:00, linear
+  between). The sector table's counts became both the 100% baseline and the
+  spawn-mix weights — one table drives composition, initial population, and
+  ongoing pressure. Mobile agents spawn at edges; sweepers/pulsars materialize
+  at chokepoints (found by sampling clear points flanked by terrain on
+  opposite sides — the same finder used at generation).
+- **3 casters carried, 2 to enter**: the end-of-sector discard choice is a real
+  decision now (Noita's "which wands do I keep" moment). Continue is blocked
+  until you're down to two.
+- **Tooltips** (deck editor hover + world proximity labels) — glyphs alone were
+  unreadable for new players; hover state lives in GameState so render stays
+  read-only.
+- **Terrain shapes**: bars/L-shapes/blobs/pillar fields via new stamp helpers;
+  bounding rects still drive spacing so clearance rules survived unchanged.
+- **Next:** fold beta learnings + this together after playtest verdicts.
+
 ## 2026-07-22 — v0.5 "Trigger Protocol": the deck gets its depth
 
 - First update built ON the deck system per the new pillar, and it's the most

@@ -7,9 +7,12 @@ import { META_TRACKS, nextCost } from "./meta";
 import { MODS, type ModId } from "./mods";
 import { sectorDef } from "./sector";
 import type { GameState, RunState } from "./state";
+import { ENTER_CASTERS } from "./state";
+import { saturation } from "./update";
 import { cellHash, MAT, type Substrate } from "./substrate";
 import {
   CARD_TILE,
+  casterDiscardRect,
   CONTINUE_RECT,
   deckSlotRect,
   draftCardRect,
@@ -172,9 +175,14 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
     fillCircle(ctx, m.x, m.y, 1.8, C.mote);
   }
 
-  // Card pickups: floating card tiles.
+  // Card pickups: floating card tiles. Walking close reveals what they do.
   for (const node of sec.cardNodes) {
     const def = CARDS[node.card];
+    const near = Math.hypot(node.x - run.player.x, node.y - run.player.y) < 110;
+    if (near) {
+      text(ctx, def.name, node.x, node.y - 26, 10, def.color, "center", true, 700);
+      text(ctx, def.desc, node.x, node.y + 26, 9, C.hudDim, "center", true, 400);
+    }
     const bob = Math.sin(run.time * 2.2 + node.x * 0.01) * 3;
     ctx.globalAlpha = 0.18;
     fillCircle(ctx, node.x, node.y + bob, 18, def.color);
@@ -187,9 +195,17 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
     text(ctx, def.glyph, node.x, node.y + bob, 11, def.color, "center", true, 700);
   }
 
-  // Caster-frame pickups: hexagonal chips.
+  // Caster-frame pickups: hexagonal chips. Walking close reveals the specs.
   for (const node of sec.frameNodes) {
     const def = FRAMES[node.frame];
+    const near = Math.hypot(node.x - run.player.x, node.y - run.player.y) < 120;
+    if (near) {
+      text(ctx, def.name, node.x, node.y - 32, 10, def.color, "center", true, 700);
+      text(ctx, def.desc, node.x, node.y + 32, 9, C.hudDim, "center", true, 400);
+      if (run.casters.length >= 3) {
+        text(ctx, "hands full (3) — sort at the next gate", node.x, node.y + 44, 8.5, C.canister, "center", true, 400);
+      }
+    }
     const bob = Math.sin(run.time * 1.8 + node.y * 0.01) * 3;
     ctx.globalAlpha = 0.2;
     fillCircle(ctx, node.x, node.y + bob, 22, def.color);
@@ -424,7 +440,7 @@ function drawHud(ctx: CanvasRenderingContext2D, run: RunState): void {
 
   text(
     ctx,
-    `t=${sec.elapsed.toFixed(1)}s  agents=${sec.hazards.length}  kills=${run.kills}  seed=${run.seed.toString(16).padStart(8, "0")}`,
+    `t=${sec.elapsed.toFixed(1)}s  agents=${sec.hazards.length}  sat=${Math.round(saturation(sec.elapsed) * 100)}%  kills=${run.kills}  seed=${run.seed.toString(16).padStart(8, "0")}`,
     config.width - 16,
     config.height - 22,
     11,
@@ -475,15 +491,16 @@ function drawCasterStrip(ctx: CanvasRenderingContext2D, run: RunState): void {
   ctx.fillStyle = caster.recharging ? C.canister : C.playerCore;
   ctx.fillRect(x0 + 1, y + tile + 5, Math.max(0, frac) * (total - 1), 3);
 
-  // Holstered caster: mini strip above, with the swap hint.
-  if (run.casters.length > 1) {
-    const other = run.casters[1 - run.activeCaster];
+  // Holstered casters (up to two): mini strips above, with the cycle hint.
+  let miniRow = 0;
+  for (let k = 1; k < run.casters.length; k++) {
+    const other = run.casters[(run.activeCaster + k) % run.casters.length];
     const oframe = FRAMES[other.frame];
     const mini = 14;
     const mtotal = other.slots.length * (mini + 3) - 3;
     const mx0 = config.width / 2 - mtotal / 2;
-    const my = y - 22;
-    ctx.globalAlpha = 0.55;
+    const my = y - 22 - miniRow * 18;
+    ctx.globalAlpha = 0.55 - miniRow * 0.15;
     other.slots.forEach((card, i) => {
       const x = mx0 + i * (mini + 3);
       ctx.fillStyle = C.panel;
@@ -495,8 +512,9 @@ function drawCasterStrip(ctx: CanvasRenderingContext2D, run: RunState): void {
         text(ctx, CARDS[card].glyph, x + mini / 2, my + mini / 2 + 0.5, 6.5, CARDS[card].color, "center", true, 700);
       }
     });
-    text(ctx, "Q", mx0 - 10, my + mini / 2, 10, C.hudText, "right", true, 800);
+    if (miniRow === 0) text(ctx, "Q", mx0 - 10, my + mini / 2, 10, C.hudText, "right", true, 800);
     ctx.globalAlpha = 1;
+    miniRow += 1;
   }
 }
 
@@ -664,7 +682,20 @@ function drawDraft(
   });
 
   // Deck editor — one row per carried caster.
-  text(ctx, "CASTERS — click a card, then a destination (deck order = cast order)", cx, 278, 12, C.hudText, "center", true);
+  const mustDrop = run.casters.length > ENTER_CASTERS;
+  text(
+    ctx,
+    mustDrop
+      ? "CASTERS — you carry 3: discard one (✕) to proceed with 2"
+      : "CASTERS — click a card, then a destination (deck order = cast order)",
+    cx,
+    272,
+    12,
+    mustDrop ? C.canister : C.hudText,
+    "center",
+    true,
+    mustDrop ? 700 : 600,
+  );
   run.casters.forEach((caster: Caster, row: number) => {
     const frame = FRAMES[caster.frame];
     const first = deckSlotRect(row, 0, caster.slots.length);
@@ -675,6 +706,15 @@ function drawDraft(
       const sel = state.editSel;
       drawCardTile(ctx, r, card, sel !== null && sel.zone === "slot" && sel.caster === row && sel.index === i, false);
     });
+    if (mustDrop) {
+      const dr = casterDiscardRect(row, caster.slots.length);
+      ctx.fillStyle = C.panel;
+      ctx.fillRect(dr.x, dr.y, dr.w, dr.h);
+      ctx.strokeStyle = C.drifter;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(dr.x + 0.5, dr.y + 0.5, dr.w - 1, dr.h - 1);
+      text(ctx, "✕", dr.x + dr.w / 2, dr.y + dr.h / 2 + 0.5, 12, C.drifter, "center", true, 700);
+    }
   });
 
   text(ctx, `inventory (${run.inventory.length})`, cx, INV_Y - 12, 11, C.hudDim, "center", true);
@@ -691,7 +731,7 @@ function drawDraft(
 
   // Continue button.
   const cr = CONTINUE_RECT;
-  const ready = state.chosenMod !== null;
+  const ready = state.chosenMod !== null && !mustDrop;
   ctx.fillStyle = C.panel;
   ctx.fillRect(cr.x, cr.y, cr.w, cr.h);
   ctx.strokeStyle = ready ? C.gateOpen : C.wallEdge;
@@ -699,7 +739,7 @@ function drawDraft(
   ctx.strokeRect(cr.x + 0.5, cr.y + 0.5, cr.w - 1, cr.h - 1);
   text(
     ctx,
-    ready ? "CONTINUE  (ENTER)" : "pick a modification first",
+    ready ? "CONTINUE  (ENTER)" : mustDrop ? "discard a caster first" : "pick a modification first",
     cx,
     cr.y + cr.h / 2,
     ready ? 14 : 11,
@@ -708,6 +748,64 @@ function drawDraft(
     true,
     ready ? 700 : 400,
   );
+
+  drawHoverTooltip(ctx, state);
+}
+
+/** Tooltip panel for whatever the mouse is over in the deck editor. */
+function drawHoverTooltip(ctx: CanvasRenderingContext2D, state: GameState): void {
+  const hover = state.hover;
+  if (hover === null) return;
+  const lines: [string, string][] = [];
+  let title = "";
+  let color: string = C.hudText;
+  if (hover.kind === "card") {
+    const def = CARDS[hover.card];
+    title = def.name;
+    color = def.color;
+    lines.push(["type", def.kind]);
+    lines.push(["", def.desc]);
+    if (def.kind === "payload") {
+      lines.push(["dmg", String(def.dmg)]);
+      lines.push(["speed", `${def.speed} px/s`]);
+      lines.push(["range", `~${Math.round(def.speed * def.life)} px`]);
+      if (def.pellets > 1) lines.push(["pellets", String(def.pellets)]);
+      if (def.trigger) lines.push(["trigger", def.trigger === "impact" ? "casts cargo on impact" : "casts cargo mid-flight"]);
+    }
+    if (def.delayAdd > 0) lines.push(["delay", `+${def.delayAdd.toFixed(2)}s`]);
+  } else {
+    const def = FRAMES[hover.frame];
+    title = def.name;
+    color = def.color;
+    lines.push(["", def.desc]);
+    lines.push(["slots", String(def.slots)]);
+    lines.push(["cast delay", `${def.castDelay.toFixed(2)}s`]);
+    lines.push(["recharge", `${def.rechargeTime.toFixed(2)}s`]);
+    if (def.dmgBonus > 0) lines.push(["bonus", `+${def.dmgBonus} dmg on all payloads`]);
+    if (def.shuffle) lines.push(["quirk", "random cast order each recharge"]);
+  }
+
+  const w = 240;
+  const h = 30 + lines.length * 15;
+  const x = Math.min(config.width - w - 8, Math.max(8, state.hoverX + 14));
+  const y = Math.min(config.height - h - 8, Math.max(8, state.hoverY - h - 6));
+  ctx.fillStyle = C.bg;
+  ctx.globalAlpha = 0.96;
+  ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  text(ctx, title, x + 12, y + 16, 13, color, "left", false, 700);
+  lines.forEach(([k, v], i) => {
+    const ly = y + 36 + i * 15;
+    if (k) {
+      text(ctx, k, x + 12, ly, 10.5, C.hudDim, "left", true, 400);
+      text(ctx, v, x + 90, ly, 10.5, C.hudText, "left", true, 400);
+    } else {
+      text(ctx, v, x + 12, ly, 10.5, C.hudDim, "left", false, 400);
+    }
+  });
 }
 
 function drawPaused(ctx: CanvasRenderingContext2D): void {
