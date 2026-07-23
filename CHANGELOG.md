@@ -9,6 +9,23 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.5.0] - 2026-07-22 — "Trigger Protocol"
+
+The first update built on the deck-first pillar: casting depth.
+
+### Added
+- **Trigger cards**: Spark Trigger casts the next deck card (with its modifiers)
+  where it lands; Timer Trigger casts it mid-flight. Blink as cargo teleports
+  you to the impact point.
+- **Multicast** modifier: the next two payloads cast simultaneously.
+- **Caster Frames** — casters are now loot: Standard, Lattice (7 slots, slow
+  recharge), Snubnose (3 slots, fast, +1 damage), Shuffler (random seeded cast
+  order, very fast). Carry two casters and swap with **Q**; each keeps its own
+  cast/recharge timers. Frames are found in sectors 2 and 4.
+- Deck editor handles both casters (swap cards between decks); HUD shows the
+  active frame plus a mini strip for the holstered one.
+- Dev hook `?deck=a,b,c` to rig the starting deck for testing.
+
 ## [0.4.0] - 2026-07-22 — "The Caster"
 
 A focus redesign one day after 0.3.0: the material/liquid simulation was removed by

@@ -54,7 +54,8 @@ stabilize.
 - **Determinism:** all in-run randomness flows through `RunState.rng` (seeded
   mulberry32); `Math.random` is only for picking new-run seeds. Cosmetic variation
   uses position hashes (`cellHash`) instead of the run RNG. Dev hooks
-  `?seed=<hex>&sector=<1-5>` pin runs for reproducible testing.
+  `?seed=<hex>&sector=<1-5>&deck=<card,ids>` pin runs and rig decks for
+  reproducible testing.
 - **Fast projectiles must substep** (≤8px per collision check) or they tunnel through
   single-cell walls — see `updateProjectiles`.
 - **TypeScript is strict.** No `any` without a written reason. Prefer small pure functions.
