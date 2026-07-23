@@ -79,3 +79,8 @@ export const CONTRACT_RECT: UiRect = {
   w: 480,
   h: 26,
 };
+
+/** Waystation shop buttons: a vertical stack on the clear screen's left edge. */
+export function shopRect(i: number): UiRect {
+  return { x: 20, y: 262 + i * 56, w: 168, h: 48 };
+}

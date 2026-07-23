@@ -58,6 +58,26 @@ export const LINES = {
     "projectile retrieved. juggling is not in the test plan.",
     "clean catch. recorded under 'anomalous dexterity'.",
   ],
+  shrine: [
+    "blood accepted. the shrine says thank you. sort of.",
+    "integrity exchanged for power. a classic mistake. enjoy.",
+  ],
+  shopPurchase: [
+    "transaction logged. the waystation thanks you for your flux.",
+    "purchase complete. no refunds. the sim is not a charity.",
+  ],
+  eliteDown: [
+    "elite terminated. the committee is uncomfortable.",
+    "gilded agent destroyed. someone paid extra for that.",
+  ],
+  wardenIntro: [
+    "warden online. the exit disagrees with you.",
+    "custodian deployed. do try to make it interesting.",
+  ],
+  wardenDown: [
+    "warden decommissioned. the exit is yours. reluctantly.",
+    "custodian archived. we'll bill you for it later.",
+  ],
 } as const;
 
 // --- sector anomalies (house rules) ----------------------------------------

@@ -88,6 +88,11 @@ export interface RunState {
   mods: ModId[];
   /** Active contract for the current sector, or null. */
   contract: ContractId | null;
+  /** Waystation prices (scale per purchase this run). */
+  packCost: number;
+  rerollCost: number;
+  /** Sim Depth this run was started at (difficulty ladder). */
+  depth: number;
   /** The player's decks (up to MAX_CASTERS); swap in play with Q. */
   casters: Caster[];
   activeCaster: number;
@@ -150,6 +155,8 @@ export interface GameState {
   /** Optional wager offered on the sector-clear screen. */
   contractOffer: ContractId | null;
   contractAccepted: boolean;
+  /** Waystation PURGE mode: the next clicked card is destroyed. */
+  purging: boolean;
   editSel: EditSelection | null;
   outcome: Outcome | null;
   /** Wall-clock-ish UI time for menu pulses; advances every update. */
@@ -190,6 +197,7 @@ export function createInitialState(): GameState {
     chosenMod: null,
     contractOffer: null,
     contractAccepted: false,
+    purging: false,
     editSel: null,
     outcome: null,
     uiTime: 0,
@@ -250,6 +258,9 @@ export function createRun(meta: MetaState, seed: number): RunState {
     kills: 0,
     mods: [],
     contract: null,
+    packCost: config.bazaar.packCost,
+    rerollCost: config.bazaar.rerollCost,
+    depth: Math.min(meta.chosenDepth, meta.unlockedDepth),
     casters: [createStarterCaster()],
     activeCaster: 0,
     inventory: [],

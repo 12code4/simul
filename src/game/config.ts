@@ -124,6 +124,55 @@ export const config = {
     idleAfter: 8, // seconds of standing still before the sim intervenes
   },
 
+  // The Waystation: spend run-flux between sectors. Prices scale per purchase.
+  bazaar: {
+    packCost: 15,
+    packCostStep: 5,
+    repairCost: 20,
+    purgeCost: 10,
+    rerollCost: 8,
+    rerollCostStep: 4,
+  },
+
+  // Elite agents: gilded, tougher, faster, richer. Heat spawns roll for elite.
+  elite: {
+    hpBonusMult: 2, // hp = base * mult + 1
+    speedMult: 1.25,
+    extraDrops: 3,
+    heatChance: 0.2,
+  },
+
+  // The Warden: sector 5's gate guardian.
+  warden: {
+    r: 26,
+    hp: 40,
+    contactR: 34,
+    orbitSpeed: 0.25, // radians/s around the arena's far half
+    nodeCount: 3,
+    nodeHp: 3,
+    nodeOrbitR: 70,
+    nodeOrbitSpeed: 2,
+    nodeR: 9,
+    burstEvery: 2.5,
+    burstShots: 8,
+    shotSpeed: 260,
+    shotLife: 3.5,
+    chargeTelegraph: 0.6,
+    chargeSpeed: 900,
+    chargeDuration: 0.35,
+    chargeCooldown: 3.5,
+    summonEvery: 5,
+  },
+
+  // Sim Depth (post-win difficulty ladder): per depth level, agents move
+  // +8% faster, heat drips 8% faster, and elite chance rises +5%.
+  depth: {
+    max: 5,
+    speedPerLevel: 0.08,
+    heatPerLevel: 0.92, // heatInterval multiplier per level
+    eliteChancePerLevel: 0.05,
+  },
+
   camera: {
     stiffness: 8, // higher = snappier follow
   },

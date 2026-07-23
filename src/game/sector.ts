@@ -22,10 +22,44 @@ export interface PointItem {
 }
 
 export type Hazard =
-  | { kind: "drifter"; id: number; hp: number; x: number; y: number; vx: number; vy: number; r: number }
-  | { kind: "seeker"; id: number; hp: number; x: number; y: number; vx: number; vy: number; r: number }
-  | { kind: "sweeper"; id: number; hp: number; x: number; y: number; r: number; ax: number; ay: number; bx: number; by: number; phase: number; rate: number }
-  | { kind: "pulsar"; id: number; hp: number; x: number; y: number; r: number; timer: number };
+  | { kind: "drifter"; id: number; hp: number; elite: boolean; x: number; y: number; vx: number; vy: number; r: number }
+  | { kind: "seeker"; id: number; hp: number; elite: boolean; x: number; y: number; vx: number; vy: number; r: number }
+  | { kind: "sweeper"; id: number; hp: number; elite: boolean; x: number; y: number; r: number; ax: number; ay: number; bx: number; by: number; phase: number; rate: number }
+  | { kind: "pulsar"; id: number; hp: number; elite: boolean; x: number; y: number; r: number; timer: number };
+
+/** A blood shrine: pay 1 integrity, receive a strong card. */
+export interface Shrine {
+  x: number;
+  y: number;
+  card: CardId;
+}
+
+/** A hostile projectile (the Warden's). */
+export interface EnemyShot {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+}
+
+/** The sector-5 gate guardian. */
+export interface Warden {
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  /** Orbit parameter for its drift around the arena's far half. */
+  angle: number;
+  burstTimer: number;
+  summonTimer: number;
+  chargeCooldown: number;
+  /** Set while telegraphing/executing a charge. */
+  charge: { dx: number; dy: number; t: number; telegraph: number } | null;
+  nodeAngle: number;
+  /** Shield nodes: the Warden is immune while any survive. */
+  nodes: { offset: number; hp: number }[];
+}
 
 /** A card pickup in the world. */
 export interface CardNode {
@@ -101,7 +135,10 @@ export interface SectorState {
   canisters: Canister[];
   cardNodes: CardNode[];
   frameNodes: FrameNode[];
+  shrines: Shrine[];
   projectiles: Projectile[];
+  enemyShots: EnemyShot[];
+  warden: Warden | null;
   rings: Ring[];
   gate: Gate;
   spawn: PointItem;
@@ -253,6 +290,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
         kind: "drifter",
         id: 0,
         hp: hz.drifter.hp,
+        elite: false,
         x,
         y,
         vx: Math.cos(angle) * speed,
@@ -267,6 +305,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
       kind: "seeker",
       id: 0,
       hp: hz.seeker.hp,
+      elite: false,
       x,
       y,
       vx: 0,
@@ -291,6 +330,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
         kind: "sweeper",
         id: 0,
         hp: hz.sweeper.hp,
+        elite: false,
         x: cx,
         y: cy,
         r: hz.sweeper.r,
@@ -312,8 +352,33 @@ export function generateSector(rng: Rng, index: number): SectorState {
       if (dist(x, y, spawn.x, spawn.y) < 360) continue;
       if (dist(x, y, gate.x, gate.y) < 170) continue;
       if (solidInCircle(substrate, x, y, 26)) continue;
-      hazards.push({ kind: "pulsar", id: 0, hp: hz.pulsar.hp, x, y, r: hz.pulsar.r, timer: range(rng, 0.8, hz.pulsar.cycle) });
+      hazards.push({ kind: "pulsar", id: 0, hp: hz.pulsar.hp, elite: false, x, y, r: hz.pulsar.r, timer: range(rng, 0.8, hz.pulsar.cycle) });
       break;
+    }
+  }
+
+  // Blood shrines (sector 2+, most sectors): strong card, paid in integrity.
+  const shrines: Shrine[] = [];
+  if (index >= 1 && nextFloat(rng) < 0.75) {
+    const strong: CardId[] = ["sparktrigger", "timertrigger", "multi", "twin", "pierce", "blink", "heavy", "remora", "prism"];
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const x = range(rng, 160, w - 160);
+      const y = range(rng, 160, h - 160);
+      if (dist(x, y, spawn.x, spawn.y) < 380) continue;
+      if (dist(x, y, gate.x, gate.y) < 200) continue;
+      if (solidInCircle(substrate, x, y, 30)) continue;
+      if (cardNodes.some((n) => dist(n.x, n.y, x, y) < 220)) continue;
+      shrines.push({ x, y, card: pick(rng, strong) });
+      break;
+    }
+  }
+
+  // Promote 1–2 agents to elites in the later sectors (gilded, tougher).
+  if (index >= 2 && hazards.length > 0) {
+    const promotions = index >= 4 ? 2 : 1;
+    for (let e = 0; e < promotions; e++) {
+      const hzd = pick(rng, hazards);
+      if (!hzd.elite) makeElite(hzd);
     }
   }
 
@@ -333,7 +398,10 @@ export function generateSector(rng: Rng, index: number): SectorState {
     canisters,
     cardNodes,
     frameNodes,
+    shrines,
     projectiles: [],
+    enemyShots: [],
+    warden: null,
     rings: [],
     gate,
     spawn,
@@ -389,6 +457,22 @@ function rollCardPicks(rng: Rng, index: number, count: number, cacheCount: numbe
     picks.push(pick ?? "bolt");
   }
   return picks;
+}
+
+/** Promote a hazard to elite: gilded, tougher, faster, richer. */
+export function makeElite(hzd: Hazard): void {
+  hzd.elite = true;
+  hzd.hp = hzd.hp * config.elite.hpBonusMult + 1;
+  hzd.r += 1.5;
+  if (hzd.kind === "drifter") {
+    hzd.vx *= config.elite.speedMult;
+    hzd.vy *= config.elite.speedMult;
+  } else if (hzd.kind === "sweeper") {
+    hzd.rate *= config.elite.speedMult;
+  } else if (hzd.kind === "pulsar") {
+    hzd.timer /= config.elite.speedMult;
+  }
+  // Seekers read their elite flag at steer time (update.ts).
 }
 
 /** A one-cell-thick destructible wall ring sealing a cache. */

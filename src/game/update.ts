@@ -20,11 +20,13 @@ import type { Input } from "./input";
 import { buyUpgrade, META_TRACKS, saveMeta } from "./meta";
 import { applyMod, rollDraft, type ModId } from "./mods";
 import { clamp, dist } from "./physics";
-import { pick, range, rangeInt, shuffle } from "./rng";
+import { nextFloat, pick, range, rangeInt, shuffle } from "./rng";
 import { sectorDef, type Hazard, type SectorState } from "./sector";
 import { createRun, enterSector, MAX_CASTERS, type GameState, type RunState } from "./state";
 import { detonate, MAT, matAt, resolveCircleSubstrate } from "./substrate";
-import { CONTINUE_RECT, CONTRACT_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect } from "./ui";
+import { CONTINUE_RECT, CONTRACT_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect, shopRect } from "./ui";
+import { CARD_IDS } from "./cards";
+import { makeElite } from "./sector";
 
 /** Queue a deadpan line from the simulation. */
 function pushToast(run: RunState, text: string): void {
@@ -197,6 +199,7 @@ function advanceFromDraft(state: GameState, run: RunState, mod: ModId): void {
   run.contract = state.contractAccepted && state.contractOffer !== null ? state.contractOffer : null;
   state.contractOffer = null;
   state.contractAccepted = false;
+  state.purging = false;
   state.draftOptions = null;
   state.chosenMod = null;
   state.editSel = null;
@@ -233,6 +236,13 @@ function handleDraftClick(
     state.contractAccepted = !state.contractAccepted;
     return;
   }
+  // The Waystation shop.
+  for (let i = 0; i < 4; i++) {
+    if (inRect(mx, my, shopRect(i))) {
+      shopBuy(state, run, i);
+      return;
+    }
+  }
   // Deck slots — one row per carried caster.
   for (let row = 0; row < run.casters.length; row++) {
     const caster = run.casters[row];
@@ -253,7 +263,43 @@ function handleDraftClick(
   state.editSel = null;
 }
 
+/** Waystation services: pack / repair / purge / reroll. Flux is the price. */
+function shopBuy(state: GameState, run: RunState, item: number): void {
+  const bz = config.bazaar;
+  if (item === 0 && run.flux >= run.packCost) {
+    run.flux -= run.packCost;
+    run.packCost += bz.packCostStep;
+    const card = pick(run.rng, CARD_IDS);
+    run.inventory.push(card);
+    pushToast(run, pickLine(LINES.shopPurchase, run.flux));
+  } else if (item === 1 && run.flux >= bz.repairCost && run.integrity < run.maxIntegrity) {
+    run.flux -= bz.repairCost;
+    run.integrity += 1;
+    pushToast(run, "hull patched. do stop getting hit.");
+  } else if (item === 2 && run.flux >= bz.purgeCost && !state.purging) {
+    run.flux -= bz.purgeCost;
+    state.purging = true;
+    state.editSel = null;
+  } else if (item === 3 && run.flux >= run.rerollCost && state.draftOptions !== null) {
+    run.flux -= run.rerollCost;
+    run.rerollCost += bz.rerollCostStep;
+    state.draftOptions = rollDraft(run.rng, run);
+    state.chosenMod = null;
+    state.menuIndex = 0;
+  }
+}
+
 function clickDeckSlot(state: GameState, run: RunState, row: number, i: number): void {
+  // PURGE mode: this click destroys the card instead of selecting it.
+  if (state.purging) {
+    const slots = run.casters[row].slots;
+    if (slots[i] !== null) {
+      slots[i] = null;
+      state.purging = false;
+      pushToast(run, "card purged. the deck breathes easier.");
+    }
+    return;
+  }
   const sel = state.editSel;
   const slots = run.casters[row].slots;
   if (sel === null) {
@@ -283,6 +329,15 @@ function clickDeckSlot(state: GameState, run: RunState, row: number, i: number):
 }
 
 function clickInventory(state: GameState, run: RunState, i: number): void {
+  // PURGE mode: destroy the clicked inventory card.
+  if (state.purging) {
+    if (i < run.inventory.length) {
+      run.inventory.splice(i, 1);
+      state.purging = false;
+      pushToast(run, "card purged. the deck breathes easier.");
+    }
+    return;
+  }
   const sel = state.editSel;
   if (sel === null) {
     if (i < run.inventory.length) state.editSel = { zone: "inv", caster: 0, index: i };
@@ -915,8 +970,12 @@ function destroyHazard(run: RunState, sec: SectorState, index: number): void {
   run.kills += 1;
   const color = hazardColor(hzd);
   addBurst(run, hzd.x, hzd.y, color, 14);
-  // OVERCLOCKED AGENTS house rule: hazard pay.
-  const bonus = sec.anomaly === "overclock" ? 1 : 0;
+  if (hzd.elite) {
+    addBurst(run, hzd.x, hzd.y, config.colors.shard, 16);
+    pushToast(run, pickLine(LINES.eliteDown, run.kills));
+  }
+  // OVERCLOCKED AGENTS house rule: hazard pay. Elites carry a bounty.
+  const bonus = (sec.anomaly === "overclock" ? 1 : 0) + (hzd.elite ? config.elite.extraDrops : 0);
   const drops = config.caster.killDrop + bonus + (hzd.kind === "sweeper" || hzd.kind === "pulsar" ? 1 : 0);
   for (let d = 0; d < drops; d++) {
     sec.motes.push({ x: hzd.x + (d - drops / 2) * 10, y: hzd.y + ((d * 7) % 13) - 6 });
@@ -961,11 +1020,12 @@ function updateHazards(run: RunState, sec: SectorState, dt: number): void {
         const d = Math.hypot(dx, dy) || 1;
         const desX = (dx / d) * hz.seeker.maxSpeed;
         const desY = (dy / d) * hz.seeker.maxSpeed;
-        const ddx = desX - hzd.vx;
-        const ddy = desY - hzd.vy;
+        const eliteMult = hzd.elite ? config.elite.speedMult : 1;
+        const ddx = desX * eliteMult - hzd.vx;
+        const ddy = desY * eliteMult - hzd.vy;
         const dl = Math.hypot(ddx, ddy);
         if (dl > 0.001) {
-          const f = Math.min(1, (hz.seeker.steer * dt) / dl);
+          const f = Math.min(1, (hz.seeker.steer * eliteMult * dt) / dl);
           hzd.vx += ddx * f;
           hzd.vy += ddy * f;
         }
@@ -1108,16 +1168,21 @@ function spawnEdgeDrifter(run: RunState, sec: SectorState): boolean {
     const ty = sec.h * range(rng, 0.3, 0.7);
     const d = dist(x, y, tx, ty) || 1;
     const speed = range(rng, hz.speedMin, hz.speedMax);
-    sec.hazards.push({
+    const drifter: Hazard = {
       kind: "drifter",
       id: sec.nextId++,
       hp: hz.hp,
+      elite: false,
       x,
       y,
       vx: ((tx - x) / d) * speed,
       vy: ((ty - y) / d) * speed,
       r: range(rng, hz.rMin, hz.rMax),
-    });
+    };
+    // Heat spawns roll for elite; Sim Depth raises the odds.
+    const eliteChance = config.elite.heatChance + config.depth.eliteChancePerLevel * run.depth;
+    if (nextFloat(rng) < eliteChance) makeElite(drifter);
+    sec.hazards.push(drifter);
     addBurst(run, x, y, config.colors.drifter, 8);
     return true;
   }
@@ -1239,6 +1304,20 @@ function collectPickups(state: GameState, run: RunState): void {
       pickUpFrame(run, node.frame);
       addBurst(run, node.x, node.y, FRAMES[node.frame].color, 20);
       pushToast(run, pickLine(LINES.framePickup, Math.floor(run.time * 3)));
+    }
+  }
+
+  // Blood shrines: pay 1 integrity, take a strong card. Refused at 1 hull.
+  for (let i = sec.shrines.length - 1; i >= 0; i--) {
+    const shrine = sec.shrines[i];
+    if (dist(shrine.x, shrine.y, p.x, p.y) < s.pickupRadius + 8 && run.integrity > 1) {
+      sec.shrines.splice(i, 1);
+      run.integrity -= 1;
+      run.inventory.push(shrine.card);
+      run.shake = 0.8;
+      addBurst(run, shrine.x, shrine.y, config.colors.drifter, 20);
+      addBurst(run, shrine.x, shrine.y, CARDS[shrine.card].color, 12);
+      pushToast(run, pickLine(LINES.shrine, Math.floor(run.time * 5)));
     }
   }
 

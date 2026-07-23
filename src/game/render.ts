@@ -17,6 +17,7 @@ import {
   draftCardRect,
   inventoryRect,
   INV_Y,
+  shopRect,
   type UiRect,
 } from "./ui";
 
@@ -213,6 +214,33 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
     text(ctx, def.name[0], node.x, node.y + bob, 12, def.color, "center", true, 800);
   }
 
+  // Blood shrines: dark obelisks with a red aura. Approach reveals the deal.
+  for (const shrine of sec.shrines) {
+    const near = Math.hypot(shrine.x - run.player.x, shrine.y - run.player.y) < 130;
+    const pulse = 0.15 + 0.08 * Math.sin(run.time * 3 + shrine.x * 0.01);
+    ctx.globalAlpha = pulse;
+    fillCircle(ctx, shrine.x, shrine.y, 26, C.drifter);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = C.panel;
+    ctx.beginPath();
+    ctx.moveTo(shrine.x, shrine.y - 18);
+    ctx.lineTo(shrine.x + 10, shrine.y + 12);
+    ctx.lineTo(shrine.x - 10, shrine.y + 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = C.drifter;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    text(ctx, CARDS[shrine.card].glyph, shrine.x, shrine.y + 2, 9, CARDS[shrine.card].color, "center", true, 700);
+    if (near) {
+      text(ctx, `BLOOD SHRINE — ${CARDS[shrine.card].name}`, shrine.x, shrine.y - 32, 10, C.drifter, "center", true, 700);
+      text(ctx, "costs 1 integrity on touch", shrine.x, shrine.y + 28, 9, C.hudDim, "center", true, 400);
+      if (run.integrity <= 1) {
+        text(ctx, "refused: your hull is too thin", shrine.x, shrine.y + 40, 8.5, C.canister, "center", true, 400);
+      }
+    }
+  }
+
   // Data shards: rotating diamonds.
   sec.shards.forEach((sh, i) => {
     ctx.save();
@@ -283,8 +311,11 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
     }
   }
 
-  // Hazards.
+  // Hazards. Elites wear a gilded ring.
   for (const hzd of sec.hazards) {
+    if (hzd.elite) {
+      strokeCircle(ctx, hzd.x, hzd.y, hzd.r + 4 + Math.sin(run.time * 6) * 1.2, C.shard, 2);
+    }
     switch (hzd.kind) {
       case "drifter":
         fillCircle(ctx, hzd.x, hzd.y, hzd.r, C.drifter);
@@ -745,6 +776,30 @@ function drawDraft(
       true,
       state.contractAccepted ? 700 : 400,
     );
+  }
+
+  // The Waystation shop (left column). Spend flux now, or bank it as cores.
+  {
+    text(ctx, "WAYSTATION", 24, 244, 12, C.hudText, "left", true, 700);
+    text(ctx, `flux ${run.flux}`, 24, 258, 10, C.mote, "left", true, 400);
+    const items: { name: string; cost: number; ok: boolean; note: string }[] = [
+      { name: "CARD PACK", cost: run.packCost, ok: run.flux >= run.packCost, note: "random card" },
+      { name: "REPAIR", cost: config.bazaar.repairCost, ok: run.flux >= config.bazaar.repairCost && run.integrity < run.maxIntegrity, note: "+1 integrity" },
+      { name: "PURGE", cost: config.bazaar.purgeCost, ok: run.flux >= config.bazaar.purgeCost && !state.purging, note: "destroy a card" },
+      { name: "REROLL", cost: run.rerollCost, ok: run.flux >= run.rerollCost, note: "new mod draft" },
+    ];
+    items.forEach((item, i) => {
+      const r = shopRect(i);
+      ctx.fillStyle = C.panel;
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      const active = i === 2 && state.purging;
+      ctx.strokeStyle = active ? C.drifter : item.ok ? C.mote : C.wallEdge;
+      ctx.lineWidth = active ? 2 : 1;
+      ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+      text(ctx, item.name, r.x + 10, r.y + 14, 11, item.ok || active ? C.hudText : C.hudDim, "left", true, 700);
+      text(ctx, `◆ ${item.cost}`, r.x + r.w - 10, r.y + 14, 11, item.ok ? C.mote : C.hudDim, "right", true);
+      text(ctx, active ? "click a card to destroy" : item.note, r.x + 10, r.y + 33, 9, active ? C.drifter : C.hudDim, "left", true, 400);
+    });
   }
 
   // Deck editor — one row per carried caster.

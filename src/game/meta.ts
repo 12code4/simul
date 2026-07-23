@@ -10,6 +10,9 @@ export interface MetaState {
   hull: number;
   thrusters: number;
   capacitor: number;
+  // Sim Depth (post-win difficulty ladder): highest unlocked, and selection.
+  unlockedDepth: number;
+  chosenDepth: number;
   // Lifetime stats.
   runs: number;
   wins: number;
@@ -33,7 +36,7 @@ export const META_TRACKS: readonly MetaTrack[] = [
 ];
 
 export function defaultMeta(): MetaState {
-  return { cores: 0, hull: 0, thrusters: 0, capacitor: 0, runs: 0, wins: 0, bestSector: 0, totalFlux: 0 };
+  return { cores: 0, hull: 0, thrusters: 0, capacitor: 0, unlockedDepth: 0, chosenDepth: 0, runs: 0, wins: 0, bestSector: 0, totalFlux: 0 };
 }
 
 function toInt(v: unknown, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
@@ -52,6 +55,8 @@ export function loadMeta(): MetaState {
       hull: toInt(p.hull, d.hull, 3),
       thrusters: toInt(p.thrusters, d.thrusters, 3),
       capacitor: toInt(p.capacitor, d.capacitor, 3),
+      unlockedDepth: toInt(p.unlockedDepth, d.unlockedDepth, 5),
+      chosenDepth: toInt(p.chosenDepth, d.chosenDepth, 5),
       runs: toInt(p.runs, d.runs),
       wins: toInt(p.wins, d.wins),
       bestSector: toInt(p.bestSector, d.bestSector, 5),
