@@ -20,10 +20,10 @@ import { buyUpgrade, META_TRACKS, saveMeta } from "./meta";
 import { applyMod, rollDraft, type ModId } from "./mods";
 import { clamp, dist } from "./physics";
 import { range, rangeInt, shuffle } from "./rng";
-import { sectorDef, type Hazard, type SectorState } from "./sector";
-import { createRun, enterSector, MAX_CASTERS, type GameState, type RunState } from "./state";
-import { detonate, MAT, matAt, resolveCircleSubstrate } from "./substrate";
-import { CONTINUE_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect } from "./ui";
+import { findChokepoint, sectorDef, type Hazard, type SectorState } from "./sector";
+import { createRun, enterSector, ENTER_CASTERS, MAX_CASTERS, type GameState, type RunState } from "./state";
+import { detonate, MAT, matAt, resolveCircleSubstrate, solidInCircle } from "./substrate";
+import { casterDiscardRect, CONTINUE_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect } from "./ui";
 
 export function update(state: GameState, input: Input, dt: number): void {
   state.uiTime += dt;
@@ -150,6 +150,36 @@ function updateDraft(state: GameState, input: Input, dt: number): void {
     }
   }
 
+  // Hover tracking for tooltips (cards in slots/inventory, frame rows).
+  {
+    const m = input.mouse();
+    state.hoverX = m.x;
+    state.hoverY = m.y;
+    state.hover = null;
+    for (let row = 0; row < run.casters.length && state.hover === null; row++) {
+      const caster = run.casters[row];
+      for (let i = 0; i < caster.slots.length; i++) {
+        const card = caster.slots[i];
+        if (card !== null && inRect(m.x, m.y, deckSlotRect(row, i, caster.slots.length))) {
+          state.hover = { kind: "card", card };
+          break;
+        }
+      }
+      const first = deckSlotRect(row, 0, caster.slots.length);
+      if (state.hover === null && m.x < first.x - 4 && m.x > first.x - 150 && m.y > first.y && m.y < first.y + first.h) {
+        state.hover = { kind: "frame", frame: caster.frame };
+      }
+    }
+    if (state.hover === null) {
+      for (let i = 0; i < run.inventory.length; i++) {
+        if (inRect(m.x, m.y, inventoryRect(i))) {
+          state.hover = { kind: "card", card: run.inventory[i] };
+          break;
+        }
+      }
+    }
+  }
+
   if (input.takeClick()) {
     handleDraftClick(state, run, opts, input.mouse().x, input.mouse().y);
     if (state.phase !== "draft") return; // continue button advanced the run
@@ -163,6 +193,8 @@ function updateDraft(state: GameState, input: Input, dt: number): void {
 }
 
 function advanceFromDraft(state: GameState, run: RunState, mod: ModId): void {
+  // The next sector admits only ENTER_CASTERS decks — the choice must be made.
+  if (run.casters.length > ENTER_CASTERS) return;
   applyMod(run, mod);
   state.draftOptions = null;
   state.chosenMod = null;
@@ -194,6 +226,20 @@ function handleDraftClick(
   if (inRect(mx, my, CONTINUE_RECT) && state.chosenMod !== null) {
     advanceFromDraft(state, run, opts[state.chosenMod]);
     return;
+  }
+  // Discard buttons — carrying 3 casters means one must go.
+  if (run.casters.length > ENTER_CASTERS) {
+    for (let row = 0; row < run.casters.length; row++) {
+      if (inRect(mx, my, casterDiscardRect(row, run.casters[row].slots.length))) {
+        for (const card of run.casters[row].slots) {
+          if (card !== null) run.inventory.push(card);
+        }
+        run.casters.splice(row, 1);
+        run.activeCaster = Math.min(run.activeCaster, run.casters.length - 1);
+        state.editSel = null;
+        return;
+      }
+    }
   }
   // Deck slots — one row per carried caster.
   for (let row = 0; row < run.casters.length; row++) {
@@ -283,7 +329,6 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   const p = run.player;
   const s = run.stats;
   const sec = run.sector;
-  const def = sectorDef(sec.index);
   run.time += dt;
   sec.elapsed += dt;
 
@@ -369,10 +414,10 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   }
   p.iframes = Math.max(0, p.iframes - dt);
 
-  // Q swaps casters. Each caster keeps its own cast/recharge timer, so
-  // weaving between two decks to cover a recharge is intended tech.
+  // Q cycles casters (up to 3 mid-sector). Each keeps its own cast/recharge
+  // timer, so weaving between decks to cover a recharge is intended tech.
   if (input.takePress("KeyQ") && run.casters.length > 1) {
-    run.activeCaster = 1 - run.activeCaster;
+    run.activeCaster = (run.activeCaster + 1) % run.casters.length;
     addBurst(run, p.x, p.y, FRAMES[run.casters[run.activeCaster].frame].color, 6);
   }
 
@@ -392,7 +437,7 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   updateProjectiles(run, sec, dt);
   updateHazards(run, sec, dt);
   updateCanisters(state, run, sec, dt);
-  updateHeat(run, sec, def.heatInterval, def.heatCap, dt);
+  updateDirector(run, sec, dt);
   checkPlayerDamage(state, run);
 
   if (state.phase === "playing") {
@@ -895,41 +940,103 @@ function updateCanisters(state: GameState, run: RunState, sec: SectorState, dt: 
   }
 }
 
-/** Escalating pressure: periodically spawn an extra drifter at an arena edge. */
-function updateHeat(run: RunState, sec: SectorState, interval: number, cap: number, dt: number): void {
-  sec.heatTimer -= dt;
-  if (sec.heatTimer > 0) return;
-  sec.heatTimer += interval;
-  if (sec.heatSpawned >= cap) return;
+// --- the spawn director ----------------------------------------------------
+// Risk of Rain-style population control. The sector table's hazard counts are
+// the 100% baseline; saturation(t) scales the target over time and the
+// director tops the population up toward it, one spawn per interval, using
+// the same counts as the spawn-mix weights.
 
+/** Piecewise-linear saturation curve (see config.director for the anchors). */
+export function saturation(t: number): number {
+  const d = config.director;
+  if (t <= d.graceUntil) return d.graceSat;
+  if (t <= d.fullAt) return d.graceSat + (1 - d.graceSat) * ((t - d.graceUntil) / (d.fullAt - d.graceUntil));
+  if (t <= d.highAt) return 1 + (d.highSat - 1) * ((t - d.fullAt) / (d.highAt - d.fullAt));
+  if (t <= d.maxAt) return d.highSat + (d.maxSat - d.highSat) * ((t - d.highAt) / (d.maxAt - d.highAt));
+  return d.maxSat;
+}
+
+function updateDirector(run: RunState, sec: SectorState, dt: number): void {
+  sec.spawnTimer -= dt;
+  if (sec.spawnTimer > 0) return;
+  sec.spawnTimer = config.director.spawnInterval;
+
+  const def = sectorDef(sec.index);
+  const base = def.drifters + def.seekers + def.sweepers + def.pulsars;
+  const target = Math.round(base * saturation(sec.elapsed));
+  if (sec.hazards.length >= target) return;
+
+  // Weighted pick from the sector's composition.
   const rng = run.rng;
-  const hz = config.hazards.drifter;
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const side = rangeInt(rng, 0, 3);
-    let x = 0;
-    let y = 0;
-    if (side === 0) { x = range(rng, 40, sec.w - 40); y = 26; }
-    else if (side === 1) { x = range(rng, 40, sec.w - 40); y = sec.h - 26; }
-    else if (side === 2) { x = 26; y = range(rng, 40, sec.h - 40); }
-    else { x = sec.w - 26; y = range(rng, 40, sec.h - 40); }
-    if (dist(x, y, run.player.x, run.player.y) < 220) continue; // never spawn onto the player
+  const roll = rangeInt(rng, 1, base);
+  let kind: "drifter" | "seeker" | "sweeper" | "pulsar";
+  if (roll <= def.drifters) kind = "drifter";
+  else if (roll <= def.drifters + def.seekers) kind = "seeker";
+  else if (roll <= def.drifters + def.seekers + def.sweepers) kind = "sweeper";
+  else kind = "pulsar";
+  spawnHazard(run, sec, kind);
+}
 
-    const tx = sec.w * range(rng, 0.3, 0.7);
-    const ty = sec.h * range(rng, 0.3, 0.7);
-    const d = dist(x, y, tx, ty) || 1;
-    const speed = range(rng, hz.speedMin, hz.speedMax);
-    sec.hazards.push({
-      kind: "drifter",
-      id: sec.nextId++,
-      hp: hz.hp,
-      x,
-      y,
-      vx: ((tx - x) / d) * speed,
-      vy: ((ty - y) / d) * speed,
-      r: range(rng, hz.rMin, hz.rMax),
-    });
-    sec.heatSpawned += 1;
-    addBurst(run, x, y, config.colors.drifter, 8);
+/** Spawn one hazard during play: mobile kinds arrive at the arena edge;
+ * stationary/patrol kinds materialize at chokepoints, away from the player. */
+function spawnHazard(run: RunState, sec: SectorState, kind: "drifter" | "seeker" | "sweeper" | "pulsar"): void {
+  const rng = run.rng;
+  const hz = config.hazards;
+
+  if (kind === "drifter" || kind === "seeker") {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const side = rangeInt(rng, 0, 3);
+      let x = 0;
+      let y = 0;
+      if (side === 0) { x = range(rng, 40, sec.w - 40); y = 26; }
+      else if (side === 1) { x = range(rng, 40, sec.w - 40); y = sec.h - 26; }
+      else if (side === 2) { x = 26; y = range(rng, 40, sec.h - 40); }
+      else { x = sec.w - 26; y = range(rng, 40, sec.h - 40); }
+      if (dist(x, y, run.player.x, run.player.y) < 260) continue; // never onto the player
+
+      if (kind === "drifter") {
+        const tx = sec.w * range(rng, 0.3, 0.7);
+        const ty = sec.h * range(rng, 0.3, 0.7);
+        const d = dist(x, y, tx, ty) || 1;
+        const speed = range(rng, hz.drifter.speedMin, hz.drifter.speedMax);
+        sec.hazards.push({
+          kind: "drifter", id: sec.nextId++, hp: hz.drifter.hp, x, y,
+          vx: ((tx - x) / d) * speed, vy: ((ty - y) / d) * speed,
+          r: range(rng, hz.drifter.rMin, hz.drifter.rMax),
+        });
+      } else {
+        sec.hazards.push({ kind: "seeker", id: sec.nextId++, hp: hz.seeker.hp, x, y, vx: 0, vy: 0, r: hz.seeker.r });
+      }
+      addBurst(run, x, y, kind === "drifter" ? config.colors.drifter : config.colors.seeker, 8);
+      return;
+    }
+    return;
+  }
+
+  // Sweeper / pulsar: prefer a chokepoint far from the player.
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const choke = attempt < 8 ? findChokepoint(rng, sec.substrate, sec.w, sec.h, 6) : null;
+    const x = choke ? choke.x : range(rng, 100, sec.w - 100);
+    const y = choke ? choke.y : range(rng, 100, sec.h - 100);
+    if (dist(x, y, run.player.x, run.player.y) < 380) continue;
+    if (solidInCircle(sec.substrate, x, y, 30)) continue;
+
+    if (kind === "pulsar") {
+      sec.hazards.push({ kind: "pulsar", id: sec.nextId++, hp: hz.pulsar.hp, x, y, r: hz.pulsar.r, timer: hz.pulsar.cycle });
+      addBurst(run, x, y, config.colors.pulsar, 12);
+    } else {
+      const span = range(rng, hz.sweeper.spanMin, hz.sweeper.spanMax);
+      const horizontal = rangeInt(rng, 0, 1) === 0;
+      const ax = horizontal ? clamp(x - span, 60, sec.w - 60) : x;
+      const bx = horizontal ? clamp(x + span, 60, sec.w - 60) : x;
+      const ay = horizontal ? y : clamp(y - span, 60, sec.h - 60);
+      const by = horizontal ? y : clamp(y + span, 60, sec.h - 60);
+      sec.hazards.push({
+        kind: "sweeper", id: sec.nextId++, hp: hz.sweeper.hp, x, y, r: hz.sweeper.r,
+        ax, ay, bx, by, phase: 0, rate: range(rng, hz.sweeper.rateMin, hz.sweeper.rateMax),
+      });
+      addBurst(run, x, y, config.colors.sweeper, 12);
+    }
     return;
   }
 }
@@ -979,20 +1086,10 @@ function damagePlayer(state: GameState, run: RunState, nx: number, ny: number): 
   }
 }
 
-/**
- * A found frame becomes a second caster; with both hands full it replaces the
- * HOLSTERED caster, returning that deck's cards to the inventory.
- */
+/** A found frame becomes another caster, up to the 3-caster carry limit.
+ * (The sector-clear screen forces the choice back down to 2.) */
 function pickUpFrame(run: RunState, frame: FrameId): void {
-  if (run.casters.length < MAX_CASTERS) {
-    run.casters.push(createCaster(frame));
-    return;
-  }
-  const idx = 1 - run.activeCaster;
-  for (const card of run.casters[idx].slots) {
-    if (card !== null) run.inventory.push(card);
-  }
-  run.casters[idx] = createCaster(frame);
+  run.casters.push(createCaster(frame));
 }
 
 function collectPickups(state: GameState, run: RunState): void {
@@ -1021,6 +1118,7 @@ function collectPickups(state: GameState, run: RunState): void {
   for (let i = sec.frameNodes.length - 1; i >= 0; i--) {
     const node = sec.frameNodes[i];
     if (dist(node.x, node.y, p.x, p.y) < s.pickupRadius + 6) {
+      if (run.casters.length >= MAX_CASTERS) continue; // hands full — node stays
       sec.frameNodes.splice(i, 1);
       pickUpFrame(run, node.frame);
       addBurst(run, node.x, node.y, FRAMES[node.frame].color, 20);

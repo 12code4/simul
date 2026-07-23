@@ -10,6 +10,7 @@ import { nextFloat, pick, range, shuffle, type Rng } from "./rng";
 import {
   createSubstrate,
   solidInCircle,
+  stampWallDisc,
   stampWallRect,
   SUB,
   type Substrate,
@@ -100,10 +101,10 @@ export interface SectorState {
   rings: Ring[];
   gate: Gate;
   spawn: PointItem;
-  /** Monotonic id source for hazards spawned during play (heat). */
+  /** Monotonic id source for hazards spawned during play (the director). */
   nextId: number;
-  heatTimer: number;
-  heatSpawned: number;
+  /** Director cooldown until its next top-up spawn. */
+  spawnTimer: number;
   elapsed: number;
   shardTotal: number;
 }
@@ -131,23 +132,44 @@ export function generateSector(rng: Rng, index: number): SectorState {
   stampWallRect(substrate, 0, 0, c, h);
   stampWallRect(substrate, w - c, 0, c, h);
 
-  // Interior walls, stamped into the grid so they can be destroyed in play.
-  const wallRects: Rect[] = [];
+  // Interior terrain: a mix of shapes (stamped into the destructible grid),
+  // not just rectangles — bars make corridors, blobs make organic cover,
+  // L-shapes make corners, pillar fields make dodge lattices.
+  const wallRects: Rect[] = []; // bounding boxes, for spacing/clearance tests
   for (let i = 0; i < def.walls; i++) {
     for (let attempt = 0; attempt < 40; attempt++) {
-      const ww = range(rng, 70, 190);
-      const wh = range(rng, 70, 190);
+      const roll = nextFloat(rng);
+      let bw: number;
+      let bh: number;
+      if (roll < 0.3) {
+        bw = range(rng, 70, 190);
+        bh = range(rng, 70, 190);
+      } else if (roll < 0.5) {
+        // Bar: long and thin — the corridor maker.
+        const horizontal = nextFloat(rng) < 0.5;
+        bw = horizontal ? range(rng, 220, 420) : range(rng, 34, 50);
+        bh = horizontal ? range(rng, 34, 50) : range(rng, 220, 420);
+      } else if (roll < 0.7) {
+        bw = range(rng, 140, 240); // L-shape bounding box
+        bh = range(rng, 140, 240);
+      } else if (roll < 0.9) {
+        bw = range(rng, 130, 220); // blob bounding box
+        bh = bw;
+      } else {
+        bw = range(rng, 150, 230); // pillar field bounding box
+        bh = range(rng, 150, 230);
+      }
       const rect: Rect = {
-        x: range(rng, margin, w - margin - ww),
-        y: range(rng, margin, h - margin - wh),
-        w: ww,
-        h: wh,
+        x: range(rng, margin, w - margin - bw),
+        y: range(rng, margin, h - margin - bh),
+        w: bw,
+        h: bh,
       };
-      if (circleRect(spawn.x, spawn.y, 160, rect)) continue;
-      if (circleRect(gate.x, gate.y, 150, rect)) continue;
+      if (circleRect(spawn.x, spawn.y, 170, rect)) continue;
+      if (circleRect(gate.x, gate.y, 160, rect)) continue;
       if (wallRects.some((o) => rectsOverlap(rect, o, 48))) continue;
       wallRects.push(rect);
-      stampWallRect(substrate, rect.x, rect.y, rect.w, rect.h);
+      stampShape(substrate, rng, rect, roll);
       break;
     }
   }
@@ -233,7 +255,15 @@ export function generateSector(rng: Rng, index: number): SectorState {
   const hz = config.hazards;
   const hazards: Hazard[] = [];
 
-  for (let i = 0; i < def.drifters; i++) {
+  // The director starts the sector at partial saturation (exploration grace);
+  // it tops the population up over time during play (see update.ts).
+  const sat = config.director.initialSat;
+  const nDrifters = Math.ceil(def.drifters * sat);
+  const nSeekers = Math.ceil(def.seekers * sat);
+  const nSweepers = Math.ceil(def.sweepers * sat);
+  const nPulsars = Math.ceil(def.pulsars * sat);
+
+  for (let i = 0; i < nDrifters; i++) {
     placeMoving(rng, substrate, hazards, spawn, w, h, 300, (x, y) => {
       const speed = range(rng, hz.drifter.speedMin, hz.drifter.speedMax);
       const angle = nextFloat(rng) * Math.PI * 2;
@@ -250,7 +280,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
     });
   }
 
-  for (let i = 0; i < def.seekers; i++) {
+  for (let i = 0; i < nSeekers; i++) {
     placeMoving(rng, substrate, hazards, spawn, w, h, 460, (x, y) => ({
       kind: "seeker",
       id: 0,
@@ -263,10 +293,12 @@ export function generateSector(rng: Rng, index: number): SectorState {
     }));
   }
 
-  for (let i = 0; i < def.sweepers; i++) {
+  for (let i = 0; i < nSweepers; i++) {
     for (let attempt = 0; attempt < 40; attempt++) {
-      const cx = range(rng, margin + 100, w - margin - 100);
-      const cy = range(rng, margin + 100, h - margin - 100);
+      // Sweepers guard chokepoints when the map offers one.
+      const choke = attempt < 20 ? findChokepoint(rng, substrate, w, h, 6) : null;
+      const cx = choke ? choke.x : range(rng, margin + 100, w - margin - 100);
+      const cy = choke ? choke.y : range(rng, margin + 100, h - margin - 100);
       if (dist(cx, cy, spawn.x, spawn.y) < 320) continue;
       if (solidInCircle(substrate, cx, cy, 30)) continue;
       const span = range(rng, hz.sweeper.spanMin, hz.sweeper.spanMax);
@@ -293,10 +325,12 @@ export function generateSector(rng: Rng, index: number): SectorState {
     }
   }
 
-  for (let i = 0; i < def.pulsars; i++) {
+  for (let i = 0; i < nPulsars; i++) {
     for (let attempt = 0; attempt < 40; attempt++) {
-      const x = range(rng, margin + 60, w - margin - 60);
-      const y = range(rng, margin + 60, h - margin - 60);
+      // Pulsars also prefer chokepoints — a ring emitter in a doorway hurts.
+      const choke = attempt < 20 ? findChokepoint(rng, substrate, w, h, 6) : null;
+      const x = choke ? choke.x : range(rng, margin + 60, w - margin - 60);
+      const y = choke ? choke.y : range(rng, margin + 60, h - margin - 60);
       if (dist(x, y, spawn.x, spawn.y) < 360) continue;
       if (dist(x, y, gate.x, gate.y) < 170) continue;
       if (solidInCircle(substrate, x, y, 26)) continue;
@@ -326,8 +360,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
     gate,
     spawn,
     nextId: hazards.length,
-    heatTimer: def.heatInterval,
-    heatSpawned: 0,
+    spawnTimer: 0,
     elapsed: 0,
     shardTotal: shards.length,
   };
@@ -376,6 +409,86 @@ function rollCardPicks(rng: Rng, index: number, count: number, cacheCount: numbe
     picks.push(pick ?? "bolt");
   }
   return picks;
+}
+
+/** Stamp one terrain shape into `rect`'s footprint, chosen by `roll`. */
+function stampShape(sub: Substrate, rng: Rng, rect: Rect, roll: number): void {
+  if (roll < 0.5) {
+    // Plain rect or bar.
+    stampWallRect(sub, rect.x, rect.y, rect.w, rect.h);
+  } else if (roll < 0.7) {
+    // L-shape: two overlapping arms in a random corner orientation.
+    const armW = rect.w * range(rng, 0.3, 0.45);
+    const armH = rect.h * range(rng, 0.3, 0.45);
+    const flipX = nextFloat(rng) < 0.5;
+    const flipY = nextFloat(rng) < 0.5;
+    const vx = flipX ? rect.x + rect.w - armW : rect.x;
+    const hy = flipY ? rect.y + rect.h - armH : rect.y;
+    stampWallRect(sub, vx, rect.y, armW, rect.h);
+    stampWallRect(sub, rect.x, hy, rect.w, armH);
+  } else if (roll < 0.9) {
+    // Blob: overlapping discs wandering around the center.
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + rect.h / 2;
+    let bx = cx;
+    let by = cy;
+    const blobs = 3 + Math.floor(nextFloat(rng) * 3);
+    for (let b = 0; b < blobs; b++) {
+      stampWallDisc(sub, bx, by, range(rng, rect.w * 0.18, rect.w * 0.3));
+      bx = clamp(bx + range(rng, -rect.w * 0.25, rect.w * 0.25), rect.x, rect.x + rect.w);
+      by = clamp(by + range(rng, -rect.h * 0.25, rect.h * 0.25), rect.y, rect.y + rect.h);
+    }
+  } else {
+    // Pillar field: a loose grid of small blocks — a dodge lattice.
+    const cols = 3;
+    const rows = 3;
+    for (let py = 0; py < rows; py++) {
+      for (let px = 0; px < cols; px++) {
+        if (nextFloat(rng) < 0.25) continue; // gaps keep it permeable
+        const size = range(rng, 26, 44);
+        stampWallRect(
+          sub,
+          rect.x + (px + 0.5) * (rect.w / cols) - size / 2,
+          rect.y + (py + 0.5) * (rect.h / rows) - size / 2,
+          size,
+          size,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Find a chokepoint: a clear spot flanked by terrain on roughly opposite
+ * sides — the natural home for sweepers and pulsars. Null if none found.
+ */
+export function findChokepoint(
+  rng: Rng,
+  sub: Substrate,
+  w: number,
+  h: number,
+  tries: number,
+): PointItem | null {
+  for (let t = 0; t < tries; t++) {
+    const x = range(rng, 140, w - 140);
+    const y = range(rng, 140, h - 140);
+    if (solidInCircle(sub, x, y, 34)) continue;
+    let mask = 0;
+    for (let d = 0; d < 8; d++) {
+      const a = (d / 8) * Math.PI * 2;
+      if (solidInCircle(sub, x + Math.cos(a) * 110, y + Math.sin(a) * 110, 24)) {
+        mask |= 1 << d;
+      }
+    }
+    // Need walls in two roughly opposite octants.
+    for (let d = 0; d < 4; d++) {
+      const opposite = (d + 4) % 8;
+      const near = (1 << d) | (1 << ((d + 1) % 8));
+      const far = (1 << opposite) | (1 << ((opposite + 1) % 8));
+      if ((mask & near) !== 0 && (mask & far) !== 0) return { x, y };
+    }
+  }
+  return null;
 }
 
 /** A one-cell-thick destructible wall ring sealing a cache. */

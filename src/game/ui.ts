@@ -35,9 +35,9 @@ export function draftCardRect(i: number, count: number): UiRect {
 export const CARD_TILE = 44;
 export const CARD_TILE_GAP = 10;
 
-export const DECK_SLOTS_Y = 296;
-/** Vertical spacing between the two caster rows in the editor. */
-export const DECK_ROW_H = 62;
+export const DECK_SLOTS_Y = 288;
+/** Vertical spacing between caster rows in the editor (up to 3 rows). */
+export const DECK_ROW_H = 56;
 
 export function deckSlotRect(casterRow: number, i: number, slotCount: number): UiRect {
   const total = slotCount * CARD_TILE + (slotCount - 1) * CARD_TILE_GAP;
@@ -49,7 +49,18 @@ export function deckSlotRect(casterRow: number, i: number, slotCount: number): U
   };
 }
 
-export const INV_Y = 448;
+/** The ✕ button that discards a whole caster (shown when carrying 3). */
+export function casterDiscardRect(casterRow: number, slotCount: number): UiRect {
+  const total = slotCount * CARD_TILE + (slotCount - 1) * CARD_TILE_GAP;
+  return {
+    x: config.width / 2 + total / 2 + 12,
+    y: DECK_SLOTS_Y + casterRow * DECK_ROW_H + CARD_TILE / 2 - 11,
+    w: 22,
+    h: 22,
+  };
+}
+
+export const INV_Y = 468;
 export const INV_COLS = 12;
 
 /** Inventory grid tile. Index may be one past the end (the unequip target). */
