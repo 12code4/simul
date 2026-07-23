@@ -1,10 +1,11 @@
 name: Deploy to GitHub Pages
 
-# Publish the production build to GitHub Pages whenever main changes
-# (plus a manual trigger for one-off deploys).
+# Two-channel deploy: the stable game (main) serves at the site root, and the
+# experimental build (beta) serves under /beta/ for playtesting. A push to
+# either branch rebuilds and republishes both, so they never wipe each other.
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
   workflow_dispatch:
 
 permissions:
@@ -21,30 +22,44 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout stable (main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: stable
+
+      - name: Checkout beta
+        uses: actions/checkout@v4
+        with:
+          ref: beta
+          path: beta
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Build stable
+        run: cd stable && npm ci && npm run build
 
-      - name: Build
-        run: npm run build
+      - name: Build beta
+        run: cd beta && npm ci && npm run build
+
+      - name: Assemble site (stable at /, beta at /beta/)
+        run: |
+          mkdir -p site/beta
+          cp -r stable/dist/* site/
+          cp -r beta/dist/* site/beta/
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
-          # Auto-enable Pages (source: GitHub Actions) if it isn't already.
           enablement: true
 
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
 
   deploy:
     needs: build

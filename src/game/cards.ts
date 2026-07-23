@@ -13,6 +13,9 @@ export type CardId =
   | "dart"
   | "sparktrigger"
   | "timertrigger"
+  | "yoyo"
+  | "remora"
+  | "prism"
   | "twin"
   | "haste"
   | "bounce"
@@ -93,6 +96,20 @@ export const CARDS: Record<CardId, CardDef> = {
     id: "timertrigger", name: "Timer Trigger", glyph: "T·", color: "#ff9ddd", kind: "payload",
     desc: "Casts the next card mid-flight", dmg: 1, speed: 440, life: 1.2,
     trigger: "timer", triggerTime: 0.35, delayAdd: 0.08,
+  }),
+  yoyo: card({
+    id: "yoyo", name: "Yoyo", glyph: "Yo", color: "#ffb85b", kind: "payload",
+    desc: "Comes back. Catch it: instant recast", dmg: 1, speed: 470, life: 1.7,
+    delayAdd: 0.1,
+  }),
+  remora: card({
+    id: "remora", name: "Remora", glyph: "◦", color: "#7dffcf", kind: "utility",
+    desc: "A little friend orbits you (this sector)", delayAdd: 0.3,
+  }),
+  prism: card({
+    id: "prism", name: "Prism", glyph: "Δ", color: "#b5a1ff", kind: "payload",
+    desc: "Splits into three off the first wall", dmg: 1, speed: 480, life: 1.0,
+    delayAdd: 0.1,
   }),
   twin: card({
     id: "twin", name: "Twin Cast", glyph: "x2", color: "#c05bff", kind: "modifier",

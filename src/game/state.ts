@@ -9,6 +9,7 @@ import { loadMeta, type MetaState } from "./meta";
 import { generateSector, type SectorState } from "./sector";
 import type { ModId } from "./mods";
 import { CARDS, createStarterCaster, type CardId, type Caster } from "./cards";
+import type { ContractId } from "./flavor";
 
 export const MAX_CASTERS = 2;
 
@@ -54,6 +55,19 @@ export interface Particle {
   color: string;
 }
 
+/** A deadpan line from the simulation, drawn typewriter-style in the HUD. */
+export interface Toast {
+  text: string;
+  age: number;
+}
+
+/** The Remora: a little orbital friend that rams agents. Sector-scoped. */
+export interface Orbital {
+  angle: number;
+  /** Seconds until it can damage again. */
+  hitCooldown: number;
+}
+
 export interface Outcome {
   won: boolean;
   banked: number;
@@ -72,6 +86,8 @@ export interface RunState {
   /** Hazards destroyed this run (cards, fire, explosions, coolant). */
   kills: number;
   mods: ModId[];
+  /** Active contract for the current sector, or null. */
+  contract: ContractId | null;
   /** The player's decks (up to MAX_CASTERS); swap in play with Q. */
   casters: Caster[];
   activeCaster: number;
@@ -81,6 +97,25 @@ export interface RunState {
   player: PlayerState;
   sector: SectorState;
   particles: Particle[];
+  toasts: Toast[];
+  orbitals: Orbital[];
+  /** Last aim point in world coords (the probe's eye tracks it). */
+  aimX: number;
+  aimY: number;
+  // Graze: near-misses charge the dash and build a streak.
+  grazeStreak: number;
+  grazeCooldown: number;
+  grazeTimeout: number;
+  /** Brief timer after a graze — the probe's eye goes wide. */
+  grazeFlash: number;
+  /** Seconds the player has been standing still (the sim gets bored). */
+  idleTime: number;
+  /** One-shot flags for announcer lines. */
+  saidFirstKill: boolean;
+  sectorIntroDone: boolean;
+  /** Contract tracking (House Rules update). */
+  tookHitThisSector: boolean;
+  killsAtSectorStart: number;
   camX: number;
   camY: number;
   shake: number;
@@ -112,6 +147,9 @@ export interface GameState {
   menuIndex: number;
   /** Mod picked on the sector-clear screen; applied on continue. */
   chosenMod: number | null;
+  /** Optional wager offered on the sector-clear screen. */
+  contractOffer: ContractId | null;
+  contractAccepted: boolean;
   editSel: EditSelection | null;
   outcome: Outcome | null;
   /** Wall-clock-ish UI time for menu pulses; advances every update. */
@@ -150,6 +188,8 @@ export function createInitialState(): GameState {
     draftOptions: null,
     menuIndex: 0,
     chosenMod: null,
+    contractOffer: null,
+    contractAccepted: false,
     editSel: null,
     outcome: null,
     uiTime: 0,
@@ -209,6 +249,7 @@ export function createRun(meta: MetaState, seed: number): RunState {
     flux: 0,
     kills: 0,
     mods: [],
+    contract: null,
     casters: [createStarterCaster()],
     activeCaster: 0,
     inventory: [],
@@ -216,6 +257,19 @@ export function createRun(meta: MetaState, seed: number): RunState {
     player: makePlayer(sector, stats),
     sector,
     particles: [],
+    toasts: [],
+    orbitals: [],
+    aimX: sector.spawn.x + 100,
+    aimY: sector.spawn.y,
+    grazeStreak: 0,
+    grazeCooldown: 0,
+    grazeTimeout: 0,
+    grazeFlash: 0,
+    idleTime: 0,
+    saidFirstKill: false,
+    sectorIntroDone: false,
+    tookHitThisSector: false,
+    killsAtSectorStart: 0,
     camX: sector.spawn.x,
     camY: sector.spawn.y,
     shake: 0,
@@ -229,6 +283,12 @@ export function enterSector(run: RunState, index: number): void {
   run.sector = generateSector(run.rng, index);
   run.player = makePlayer(run.sector, run.stats);
   run.particles = [];
+  run.orbitals = [];
+  run.grazeStreak = 0;
+  run.idleTime = 0;
+  run.sectorIntroDone = false;
+  run.tookHitThisSector = false;
+  run.killsAtSectorStart = run.kills;
   run.camX = run.sector.spawn.x;
   run.camY = run.sector.spawn.y;
   run.shake = 0;

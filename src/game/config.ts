@@ -102,6 +102,28 @@ export const config = {
     winBonus: 40,
   },
 
+  // Graze: shaving past danger charges the dash. Risk is a resource.
+  graze: {
+    band: 16, // extra distance beyond a hit within which a pass counts
+    rechargeBonus: 0.35, // seconds shaved off the dash recharge per graze
+    cooldown: 0.35, // min seconds between graze events
+    streakTimeout: 6,
+  },
+
+  orbital: {
+    radius: 46, // orbit distance from the player
+    speed: 3.2, // radians per second
+    dmg: 1,
+    hitCooldown: 0.5,
+    cap: 2,
+  },
+
+  announcer: {
+    toastLife: 4.5,
+    maxToasts: 3,
+    idleAfter: 8, // seconds of standing still before the sim intervenes
+  },
+
   camera: {
     stiffness: 8, // higher = snappier follow
   },

@@ -15,15 +15,22 @@ import {
   type FrameId,
 } from "./cards";
 import { config } from "./config";
+import { ANOMALIES, CONTRACT_IDS, CONTRACTS, LINES, pickLine } from "./flavor";
 import type { Input } from "./input";
 import { buyUpgrade, META_TRACKS, saveMeta } from "./meta";
 import { applyMod, rollDraft, type ModId } from "./mods";
 import { clamp, dist } from "./physics";
-import { range, rangeInt, shuffle } from "./rng";
+import { pick, range, rangeInt, shuffle } from "./rng";
 import { sectorDef, type Hazard, type SectorState } from "./sector";
 import { createRun, enterSector, MAX_CASTERS, type GameState, type RunState } from "./state";
 import { detonate, MAT, matAt, resolveCircleSubstrate } from "./substrate";
-import { CONTINUE_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect } from "./ui";
+import { CONTINUE_RECT, CONTRACT_RECT, deckSlotRect, draftCardRect, inRect, inventoryRect } from "./ui";
+
+/** Queue a deadpan line from the simulation. */
+function pushToast(run: RunState, text: string): void {
+  run.toasts.push({ text, age: 0 });
+  if (run.toasts.length > config.announcer.maxToasts) run.toasts.shift();
+}
 
 export function update(state: GameState, input: Input, dt: number): void {
   state.uiTime += dt;
@@ -87,16 +94,39 @@ function bank(state: GameState, run: RunState, won: boolean): number {
 
 function clearSector(state: GameState, run: RunState): void {
   run.flux += config.flux.sectorClear;
+  settleContract(run);
   if (run.sectorIndex >= config.sectors.length - 1) {
     const banked = bank(state, run, true);
     state.outcome = { won: true, banked, sectorReached: config.sectors.length, time: run.time, kills: run.kills };
     state.phase = "victory";
   } else {
     state.draftOptions = rollDraft(run.rng, run);
+    // Offer a fresh optional wager for the next sector.
+    state.contractOffer = pick(run.rng, CONTRACT_IDS);
+    state.contractAccepted = false;
     state.menuIndex = 0;
     state.chosenMod = null;
     state.editSel = null;
     state.phase = "draft";
+  }
+}
+
+/** Judge the sector's contract, pay out or void it, and clear it. */
+function settleContract(run: RunState): void {
+  const id = run.contract;
+  if (id === null) return;
+  run.contract = null;
+  const sec = run.sector;
+  let met = false;
+  if (id === "spotless") met = !run.tookHitThisSector;
+  else if (id === "swift") met = sec.elapsed < 75;
+  else if (id === "pacifist") met = run.kills === run.killsAtSectorStart;
+  else if (id === "greedy") met = sec.motes.length === 0;
+  if (met) {
+    run.flux += CONTRACTS[id].bonus;
+    pushToast(run, pickLine(LINES.contractMet, run.seed + run.sectorIndex));
+  } else {
+    pushToast(run, pickLine(LINES.contractFailed, run.seed + run.sectorIndex));
   }
 }
 
@@ -164,6 +194,9 @@ function updateDraft(state: GameState, input: Input, dt: number): void {
 
 function advanceFromDraft(state: GameState, run: RunState, mod: ModId): void {
   applyMod(run, mod);
+  run.contract = state.contractAccepted && state.contractOffer !== null ? state.contractOffer : null;
+  state.contractOffer = null;
+  state.contractAccepted = false;
   state.draftOptions = null;
   state.chosenMod = null;
   state.editSel = null;
@@ -193,6 +226,11 @@ function handleDraftClick(
   }
   if (inRect(mx, my, CONTINUE_RECT) && state.chosenMod !== null) {
     advanceFromDraft(state, run, opts[state.chosenMod]);
+    return;
+  }
+  // Contract wager toggle.
+  if (state.contractOffer !== null && inRect(mx, my, CONTRACT_RECT)) {
+    state.contractAccepted = !state.contractAccepted;
     return;
   }
   // Deck slots — one row per carried caster.
@@ -287,6 +325,36 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   run.time += dt;
   sec.elapsed += dt;
 
+  // Sector intro: the sim announces itself, and any house rule in effect.
+  if (!run.sectorIntroDone) {
+    run.sectorIntroDone = true;
+    if (sec.index === 0 && run.time < 1) pushToast(run, pickLine(LINES.runStart, run.seed));
+    if (sec.anomaly !== null) pushToast(run, ANOMALIES[sec.anomaly].intro);
+    if (run.contract !== null) {
+      pushToast(run, `contract active: ${CONTRACTS[run.contract].name.toLowerCase()}. no pressure.`);
+    }
+  }
+
+  // The sim gets bored of statues.
+  const axPeek = input.axis();
+  if (axPeek.x === 0 && axPeek.y === 0 && Math.hypot(p.vx, p.vy) < 15) {
+    run.idleTime += dt;
+    if (run.idleTime > config.announcer.idleAfter) {
+      run.idleTime = -6; // repeat offenders get a longer fuse
+      pushToast(run, pickLine(LINES.idle, Math.floor(run.time)));
+      spawnEdgeDrifter(run, sec);
+    }
+  } else {
+    run.idleTime = 0;
+  }
+
+  // The probe's eye tracks the real aim point.
+  {
+    const m = input.mouse();
+    run.aimX = run.camX + (m.x - config.width / 2);
+    run.aimY = run.camY + (m.y - config.height / 2);
+  }
+
   // Movement + dash.
   const ax = input.axis();
   if (ax.x !== 0 || ax.y !== 0) {
@@ -328,9 +396,11 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
     }
     addParticle(run, p.x, p.y, -p.dashX * 40, -p.dashY * 40, 0.25, 4, config.colors.player);
   } else {
+    // SLICK FLOORS house rule: everyone drifts.
+    const dragMult = sec.anomaly === "slick" ? 0.35 : 1;
     p.vx += ax.x * s.accel * dt;
     p.vy += ax.y * s.accel * dt;
-    const damp = Math.exp(-s.drag * dt);
+    const damp = Math.exp(-s.drag * dragMult * dt);
     p.vx *= damp;
     p.vy *= damp;
     const sp = Math.hypot(p.vx, p.vy);
@@ -390,10 +460,19 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   }
 
   updateProjectiles(run, sec, dt);
+  updateOrbitals(run, sec, dt);
   updateHazards(run, sec, dt);
   updateCanisters(state, run, sec, dt);
-  updateHeat(run, sec, def.heatInterval, def.heatCap, dt);
+  // ABUNDANCE house rule: richer floor, faster pressure.
+  const heatInterval = sec.anomaly === "abundance" ? def.heatInterval * 0.7 : def.heatInterval;
+  updateHeat(run, sec, heatInterval, def.heatCap, dt);
   checkPlayerDamage(state, run);
+
+  // Graze timers.
+  run.grazeCooldown = Math.max(0, run.grazeCooldown - dt);
+  run.grazeFlash = Math.max(0, run.grazeFlash - dt);
+  run.grazeTimeout -= dt;
+  if (run.grazeTimeout <= 0 && run.grazeStreak > 0) run.grazeStreak = 0;
 
   if (state.phase === "playing") {
     collectPickups(state, run);
@@ -514,6 +593,8 @@ function castFromDeck(run: RunState, c: Caster, aimX: number, aimY: number): voi
   for (const entry of casts) {
     if (entry.card === "blink") {
       blinkPlayer(run, baseAngle);
+    } else if (entry.card === "remora") {
+      summonOrbital(run);
     } else {
       spawnShots(run, p.x, p.y, baseAngle, entry, frame.dmgBonus);
     }
@@ -543,6 +624,8 @@ function spawnShots(
     // Only the first pellet of a trigger shot carries the cargo — one bomb,
     // not a bomb per pellet.
     const carry = i === 0 ? entry.cargoCard : null;
+    // RICOCHET FIELD house rule: every shot bounces at least once.
+    const fieldBounce = sec.anomaly === "ricochetfield" ? 1 : 0;
     sec.projectiles.push({
       x: x + Math.cos(a) * (config.player.radius + 6),
       y: y + Math.sin(a) * (config.player.radius + 6),
@@ -552,15 +635,50 @@ function spawnShots(
       dmg: def.dmg + mods.dmgAdd + dmgBonus,
       card: entry.card,
       life: def.life,
-      bounces: mods.bounces,
+      bounces: mods.bounces + fieldBounce,
       pierce: mods.pierce,
       homing: def.homing,
       cargoCard: carry,
       cargoMods: carry !== null ? entry.cargoMods : null,
+      returning: false,
+      split: false,
       triggerTimer: def.trigger === "timer" ? def.triggerTime : -1,
       dmgBonus,
       hitIds: [],
     });
+  }
+}
+
+/** Remora: summon (or refresh) a little orbiting friend for this sector. */
+function summonOrbital(run: RunState): void {
+  if (run.orbitals.length >= config.orbital.cap) {
+    run.orbitals.forEach((o) => {
+      o.hitCooldown = 0;
+    });
+    return;
+  }
+  run.orbitals.push({ angle: run.orbitals.length * Math.PI, hitCooldown: 0 });
+  addBurst(run, run.player.x, run.player.y, CARDS.remora.color, 10);
+}
+
+function updateOrbitals(run: RunState, sec: SectorState, dt: number): void {
+  const cfg = config.orbital;
+  const p = run.player;
+  for (const orb of run.orbitals) {
+    orb.angle += cfg.speed * dt;
+    orb.hitCooldown = Math.max(0, orb.hitCooldown - dt);
+    if (orb.hitCooldown > 0) continue;
+    const ox = p.x + Math.cos(orb.angle) * cfg.radius;
+    const oy = p.y + Math.sin(orb.angle) * cfg.radius;
+    for (let h = sec.hazards.length - 1; h >= 0; h--) {
+      const hzd = sec.hazards[h];
+      if (dist(hzd.x, hzd.y, ox, oy) < hzd.r + 7) {
+        damageHazard(run, sec, h, cfg.dmg);
+        addBurst(run, ox, oy, CARDS.remora.color, 5);
+        orb.hitCooldown = cfg.hitCooldown;
+        break;
+      }
+    }
   }
 }
 
@@ -575,6 +693,10 @@ function releaseCargo(
   dmgBonus: number,
 ): void {
   addBurst(run, x, y, CARDS[cargoCard].color, 8);
+  if (cargoCard === "remora") {
+    summonOrbital(run);
+    return;
+  }
   if (cargoCard === "blink") {
     // Teleport-bolt tech: blink as cargo moves the player to the impact point.
     const p = run.player;
@@ -642,6 +764,32 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
       }
     }
 
+    // Yoyo: past its apex it turns around, homes back to you, and re-arms
+    // (fresh hit list on the return pass). Catching it resets the cast delay.
+    if (pr.card === "yoyo") {
+      if (!pr.returning && pr.life < CARDS.yoyo.life * 0.55) {
+        pr.returning = true;
+        pr.hitIds = [];
+        addBurst(run, pr.x, pr.y, CARDS.yoyo.color, 4);
+      }
+      if (pr.returning) {
+        const p = run.player;
+        const d = dist(p.x, p.y, pr.x, pr.y) || 1;
+        const speed = Math.hypot(pr.vx, pr.vy);
+        pr.vx = ((p.x - pr.x) / d) * speed;
+        pr.vy = ((p.y - pr.y) / d) * speed;
+        if (d < config.player.radius + 8) {
+          const active = run.casters[run.activeCaster];
+          if (active.castTimer > 0.2) pushToast(run, pickLine(LINES.yoyoCatch, Math.floor(run.time * 7)));
+          active.castTimer = 0;
+          active.recharging = false;
+          addBurst(run, p.x, p.y, CARDS.yoyo.color, 8);
+          sec.projectiles.splice(i, 1);
+          continue;
+        }
+      }
+    }
+
     // Homing payloads curve toward the nearest agent in range.
     if (pr.homing && sec.hazards.length > 0) {
       let best: Hazard | null = null;
@@ -681,9 +829,34 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
         matAt(sec.substrate, pr.x, pr.y) === MAT.wall ||
         pr.x < 0 || pr.y < 0 || pr.x > sec.w || pr.y > sec.h;
     }
+    // A returning yoyo phases through terrain — it WILL come back to you.
+    if (blocked && pr.card === "yoyo" && pr.returning) blocked = false;
 
     // Terrain hit — bounce (axis-aligned reflection) or impact.
     if (blocked) {
+      // Prism: the first wall touch refracts it into a fan of three bolts.
+      if (pr.card === "prism" && !pr.split) {
+        const hitX = matAt(sec.substrate, pr.x, oldY) === MAT.wall || pr.x < 0 || pr.x > sec.w;
+        const hitY = matAt(sec.substrate, oldX, pr.y) === MAT.wall || pr.y < 0 || pr.y > sec.h;
+        const rvx = hitX || !hitY ? -pr.vx : pr.vx;
+        const rvy = hitY || !hitX ? -pr.vy : pr.vy;
+        const base = Math.atan2(rvy, rvx);
+        addBurst(run, oldX, oldY, CARDS.prism.color, 10);
+        for (let k = -1; k <= 1; k++) {
+          if (sec.projectiles.length >= config.caster.projectileCap) break;
+          const a = base + k * 0.45;
+          sec.projectiles.push({
+            x: oldX, y: oldY,
+            vx: Math.cos(a) * 520, vy: Math.sin(a) * 520,
+            r: 3.5, dmg: pr.dmg, card: "bolt", life: 0.55,
+            bounces: 0, pierce: false, homing: false,
+            cargoCard: null, cargoMods: null, returning: false, split: true,
+            triggerTimer: -1, dmgBonus: pr.dmgBonus, hitIds: [],
+          });
+        }
+        sec.projectiles.splice(i, 1);
+        continue;
+      }
       if (pr.bounces > 0) {
         pr.bounces -= 1;
         const hitX = matAt(sec.substrate, pr.x, oldY) === MAT.wall || pr.x < 0 || pr.x > sec.w;
@@ -742,11 +915,19 @@ function destroyHazard(run: RunState, sec: SectorState, index: number): void {
   run.kills += 1;
   const color = hazardColor(hzd);
   addBurst(run, hzd.x, hzd.y, color, 14);
-  const drops = config.caster.killDrop + (hzd.kind === "sweeper" || hzd.kind === "pulsar" ? 1 : 0);
+  // OVERCLOCKED AGENTS house rule: hazard pay.
+  const bonus = sec.anomaly === "overclock" ? 1 : 0;
+  const drops = config.caster.killDrop + bonus + (hzd.kind === "sweeper" || hzd.kind === "pulsar" ? 1 : 0);
   for (let d = 0; d < drops; d++) {
     sec.motes.push({ x: hzd.x + (d - drops / 2) * 10, y: hzd.y + ((d * 7) % 13) - 6 });
   }
   sec.hazards.splice(index, 1);
+  if (!run.saidFirstKill) {
+    run.saidFirstKill = true;
+    pushToast(run, pickLine(LINES.firstKill, run.seed + 1));
+  } else if (run.kills % 10 === 0) {
+    pushToast(run, pickLine(LINES.killStreak, run.kills));
+  }
 }
 
 function hazardColor(hzd: Hazard): string {
@@ -765,10 +946,12 @@ function updateHazards(run: RunState, sec: SectorState, dt: number): void {
   const p = run.player;
 
   for (const hzd of sec.hazards) {
+    // OVERCLOCKED AGENTS house rule.
+    const spd = sec.anomaly === "overclock" ? 1.25 : 1;
     switch (hzd.kind) {
       case "drifter": {
-        hzd.x += hzd.vx * dt;
-        hzd.y += hzd.vy * dt;
+        hzd.x += hzd.vx * spd * dt;
+        hzd.y += hzd.vy * spd * dt;
         bounceOffTerrain(sec, hzd);
         break;
       }
@@ -786,8 +969,8 @@ function updateHazards(run: RunState, sec: SectorState, dt: number): void {
           hzd.vx += ddx * f;
           hzd.vy += ddy * f;
         }
-        hzd.x += hzd.vx * dt;
-        hzd.y += hzd.vy * dt;
+        hzd.x += hzd.vx * spd * dt;
+        hzd.y += hzd.vy * spd * dt;
         // Seekers slide along walls (emergent: walls work as cover).
         const hit = resolveCircleSubstrate(sec.substrate, hzd.x, hzd.y, hzd.r);
         if (hit) {
@@ -867,7 +1050,9 @@ function updateCanisters(state: GameState, run: RunState, sec: SectorState, dt: 
     if (can.fuse > 0) continue;
 
     sec.canisters.splice(i, 1);
-    detonate(sec.substrate, can.x, can.y, cfg.carveRadius);
+    // FRAGILE WALLS house rule: bigger craters.
+    const carve = sec.anomaly === "fragile" ? cfg.carveRadius * 1.4 : cfg.carveRadius;
+    detonate(sec.substrate, can.x, can.y, carve);
     run.shake = 1.6;
     addBurst(run, can.x, can.y, config.colors.canister, 26);
     addBurst(run, can.x, can.y, config.colors.blast, 18);
@@ -901,7 +1086,12 @@ function updateHeat(run: RunState, sec: SectorState, interval: number, cap: numb
   if (sec.heatTimer > 0) return;
   sec.heatTimer += interval;
   if (sec.heatSpawned >= cap) return;
+  if (spawnEdgeDrifter(run, sec)) sec.heatSpawned += 1;
+}
 
+/** Spawn a drifter at an arena edge, away from the player. Also the sim's
+ * corrective measure for idle subjects. Returns false if no spot was found. */
+function spawnEdgeDrifter(run: RunState, sec: SectorState): boolean {
   const rng = run.rng;
   const hz = config.hazards.drifter;
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -928,10 +1118,10 @@ function updateHeat(run: RunState, sec: SectorState, interval: number, cap: numb
       vy: ((ty - y) / d) * speed,
       r: range(rng, hz.rMin, hz.rMax),
     });
-    sec.heatSpawned += 1;
     addBurst(run, x, y, config.colors.drifter, 8);
-    return;
+    return true;
   }
+  return false;
 }
 
 // --- damage & pickups ------------------------------------------------------
@@ -942,27 +1132,50 @@ function checkPlayerDamage(state: GameState, run: RunState): void {
 
   const pr = config.player.radius;
   const sec = run.sector;
+  const band = config.graze.band;
+  let nearMiss = false;
+
   for (const hzd of sec.hazards) {
     const d = dist(hzd.x, hzd.y, p.x, p.y);
     if (d < hzd.r + pr) {
       damagePlayer(state, run, (p.x - hzd.x) / (d || 1), (p.y - hzd.y) / (d || 1));
       return;
     }
+    if (d < hzd.r + pr + band) nearMiss = true;
   }
 
   const rc = config.hazards.pulsar;
   for (const ring of sec.rings) {
     const ringR = rc.ringMaxR * (ring.age / rc.ringDuration);
     const d = dist(ring.x, ring.y, p.x, p.y);
-    if (Math.abs(d - ringR) < rc.ringBand + pr * 0.5) {
+    const gap = Math.abs(d - ringR);
+    if (gap < rc.ringBand + pr * 0.5) {
       damagePlayer(state, run, (p.x - ring.x) / (d || 1), (p.y - ring.y) / (d || 1));
       return;
+    }
+    if (gap < rc.ringBand + pr * 0.5 + band) nearMiss = true;
+  }
+
+  // Graze: shaved past danger without touching it. Risk pays the dash bill.
+  if (nearMiss && run.grazeCooldown <= 0) {
+    run.grazeCooldown = config.graze.cooldown;
+    run.grazeTimeout = config.graze.streakTimeout;
+    run.grazeStreak += 1;
+    run.grazeFlash = 0.5;
+    if (p.charges < run.stats.dashCharges) {
+      p.recharge = Math.max(0, p.recharge - config.graze.rechargeBonus);
+    }
+    addBurst(run, p.x, p.y, config.colors.playerCore, 3);
+    if (run.grazeStreak === 5 || run.grazeStreak === 12) {
+      pushToast(run, pickLine(LINES.grazeStreak, run.grazeStreak + Math.floor(run.time)));
     }
   }
 }
 
 function damagePlayer(state: GameState, run: RunState, nx: number, ny: number): void {
   run.integrity -= 1;
+  run.tookHitThisSector = true;
+  run.grazeStreak = 0;
   const p = run.player;
   p.iframes = config.player.hitIframes * run.stats.iframeMult;
   p.dashTimer = 0;
@@ -970,6 +1183,7 @@ function damagePlayer(state: GameState, run: RunState, nx: number, ny: number): 
   p.vy = ny * config.player.hitKnockback;
   run.shake = 1;
   addBurst(run, p.x, p.y, config.colors.drifter, 18);
+  if (run.integrity === 1) pushToast(run, pickLine(LINES.lowIntegrity, Math.floor(run.time)));
 
   if (run.integrity <= 0) {
     const banked = bank(state, run, false);
@@ -1024,6 +1238,7 @@ function collectPickups(state: GameState, run: RunState): void {
       sec.frameNodes.splice(i, 1);
       pickUpFrame(run, node.frame);
       addBurst(run, node.x, node.y, FRAMES[node.frame].color, 20);
+      pushToast(run, pickLine(LINES.framePickup, Math.floor(run.time * 3)));
     }
   }
 
@@ -1069,9 +1284,13 @@ function addBurst(run: RunState, x: number, y: number, color: string, n: number)
   }
 }
 
-/** Advance purely cosmetic bits (particles, shake). Safe in any phase. */
+/** Advance purely cosmetic bits (particles, shake, toasts). Safe in any phase. */
 function tickCosmetics(run: RunState, dt: number): void {
   run.shake = Math.max(0, run.shake - 3 * dt);
+  for (let i = run.toasts.length - 1; i >= 0; i--) {
+    run.toasts[i].age += dt;
+    if (run.toasts[i].age > config.announcer.toastLife) run.toasts.splice(i, 1);
+  }
   for (let i = run.particles.length - 1; i >= 0; i--) {
     const pt = run.particles[i];
     pt.life -= dt;

@@ -5,6 +5,7 @@
 
 import { FOUND_FRAMES, type CardId, type CastMods, type FrameId } from "./cards";
 import { config } from "./config";
+import { ANOMALY_IDS, type AnomalyId } from "./flavor";
 import { clamp, dist, type Rect } from "./physics";
 import { nextFloat, pick, range, shuffle, type Rng } from "./rng";
 import {
@@ -56,6 +57,10 @@ export interface Projectile {
   /** Trigger payloads: the card (+folded mods) cast when this one lands. */
   cargoCard: CardId | null;
   cargoMods: CastMods | null;
+  /** Yoyo: true once the shot has turned around and is homing back to you. */
+  returning: boolean;
+  /** Prism: true after the one-time wall split has happened. */
+  split: boolean;
   /** Seconds until a timer trigger releases its cargo; -1 = on impact only. */
   triggerTimer: number;
   /** Frame damage bonus, inherited by cargo casts. */
@@ -100,6 +105,8 @@ export interface SectorState {
   rings: Ring[];
   gate: Gate;
   spawn: PointItem;
+  /** This sector's house rule (sectors 2+), or null. */
+  anomaly: AnomalyId | null;
   /** Monotonic id source for hazards spawned during play (heat). */
   nextId: number;
   heatTimer: number;
@@ -120,6 +127,11 @@ export function generateSector(rng: Rng, index: number): SectorState {
 
   const spawn: PointItem = { x: 110, y: h / 2 + range(rng, -h * 0.18, h * 0.18) };
   const gate: Gate = { x: w - 110, y: h * 0.25 + nextFloat(rng) * h * 0.5, r: 26, open: false };
+
+  // House rule for this sector (sector 1 stays vanilla — it's the tutorial).
+  const anomaly: AnomalyId | null = index >= 1 ? pick(rng, ANOMALY_IDS) : null;
+  const moteCount = anomaly === "abundance" ? Math.round(def.motes * 1.6) : def.motes;
+  const canisterCount = def.canisters + (anomaly === "fragile" ? 3 : 0);
 
   const substrate = createSubstrate(w, h);
 
@@ -179,7 +191,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
     }
   }
 
-  for (let i = 0; i < def.canisters; i++) {
+  for (let i = 0; i < canisterCount; i++) {
     for (let attempt = 0; attempt < 40; attempt++) {
       const x = range(rng, margin + 40, w - margin - 40);
       const y = range(rng, margin + 40, h - margin - 40);
@@ -220,7 +232,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
   }
 
   const motes: PointItem[] = [];
-  for (let i = 0; i < def.motes; i++) {
+  for (let i = 0; i < moteCount; i++) {
     for (let attempt = 0; attempt < 40; attempt++) {
       const p: PointItem = { x: range(rng, 50, w - 50), y: range(rng, 50, h - 50) };
       if (dist(p.x, p.y, spawn.x, spawn.y) < 120) continue;
@@ -325,6 +337,7 @@ export function generateSector(rng: Rng, index: number): SectorState {
     rings: [],
     gate,
     spawn,
+    anomaly,
     nextId: hazards.length,
     heatTimer: def.heatInterval,
     heatSpawned: 0,
@@ -362,9 +375,9 @@ function placeMoving(
  * trailing picks) lean on the strongest cards so cracking them feels earned.
  */
 function rollCardPicks(rng: Rng, index: number, count: number, cacheCount: number): CardId[] {
-  const payloads: CardId[] = ["burst", "slug", "dart"];
-  const full: CardId[] = ["burst", "slug", "dart", "sparktrigger", "timertrigger", "twin", "haste", "bounce", "pierce", "heavy", "multi", "blink"];
-  const strong: CardId[] = ["sparktrigger", "timertrigger", "multi", "twin", "pierce", "blink", "heavy"];
+  const payloads: CardId[] = ["burst", "slug", "dart", "yoyo"];
+  const full: CardId[] = ["burst", "slug", "dart", "yoyo", "prism", "remora", "sparktrigger", "timertrigger", "twin", "haste", "bounce", "pierce", "heavy", "multi", "blink"];
+  const strong: CardId[] = ["sparktrigger", "timertrigger", "multi", "twin", "pierce", "blink", "heavy", "remora", "prism"];
   const pool = shuffle(rng, (index === 0 ? payloads : full).slice());
   const cachePool = shuffle(rng, strong.slice());
   const picks: CardId[] = [];

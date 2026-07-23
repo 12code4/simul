@@ -9,6 +9,31 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.7.0-beta] - 2026-07-23 — "House Rules" *(beta channel: /beta/)*
+
+### Added
+- **Sector Anomalies**: every sector past the first rolls a house rule, announced
+  on entry — Slick Floors, Overclocked Agents, Ricochet Field, Abundance, or
+  Fragile Walls.
+- **Contracts**: optional wagers picked on the sector-clear screen — Spotless,
+  Swift, Pacifist, Greedy — paying bonus flux if honored.
+- **Prism** card: splits into a fan of three bolts off its first wall touch.
+
+## [0.6.0-beta] - 2026-07-23 — "Ghost in the Sim" *(beta channel: /beta/)*
+
+### Added
+- **The Announcer**: the simulation comments on your run in deadpan clinical
+  toasts — first kills, graze streaks, low hull, contracts… and it punishes
+  idling by spawning "motivation."
+- **Graze system**: shaving past danger charges your dash recharge and builds a
+  streak. Risk is a resource.
+- The probe has an **eye** now. It watches your aim, blinks, and goes wide when
+  danger gets close.
+- **Yoyo** card: a boomerang shot — catch it on the return to reset your cast
+  delay (it phases through walls to come home).
+- **Remora** card: summons a small orbital companion that rams agents
+  (sector-scoped, up to two).
+
 ## [0.5.0] - 2026-07-22 — "Trigger Protocol"
 
 The first update built on the deck-first pillar: casting depth.

@@ -3,6 +3,7 @@
 
 import { CARDS, FRAMES, type CardId, type Caster } from "./cards";
 import { config } from "./config";
+import { ANOMALIES, CONTRACTS } from "./flavor";
 import { META_TRACKS, nextCost } from "./meta";
 import { MODS, type ModId } from "./mods";
 import { sectorDef } from "./sector";
@@ -11,6 +12,7 @@ import { cellHash, MAT, type Substrate } from "./substrate";
 import {
   CARD_TILE,
   CONTINUE_RECT,
+  CONTRACT_RECT,
   deckSlotRect,
   draftCardRect,
   inventoryRect,
@@ -327,7 +329,29 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
   }
   ctx.globalAlpha = 1;
 
-  // Player (blinks while hit i-frames are active; status rings).
+  // The Remora orbitals — little diamond friends.
+  for (const orb of run.orbitals) {
+    const ox = run.player.x + Math.cos(orb.angle) * config.orbital.radius;
+    const oy = run.player.y + Math.sin(orb.angle) * config.orbital.radius;
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.rotate(orb.angle);
+    ctx.globalAlpha = 0.25;
+    fillCircle(ctx, 0, 0, 9, CARDS.remora.color);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = CARDS.remora.color;
+    ctx.beginPath();
+    ctx.moveTo(0, -5.5);
+    ctx.lineTo(4.5, 0);
+    ctx.lineTo(0, 5.5);
+    ctx.lineTo(-4.5, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Player (blinks while hit i-frames are active), with an expressive eye
+  // that tracks the aim, blinks now and then, and goes wide on a graze.
   const p = run.player;
   const invulnBlink = p.iframes > 0 && p.dashTimer <= 0 && Math.floor(run.time * 18) % 2 === 0;
   const alpha = invulnBlink ? 0.35 : 1;
@@ -336,8 +360,25 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
   fillCircle(ctx, p.x, p.y, prad + 9, C.player);
   ctx.globalAlpha = alpha;
   fillCircle(ctx, p.x, p.y, prad, C.player);
-  fillCircle(ctx, p.x, p.y, prad * 0.45, C.playerCore);
-  fillCircle(ctx, p.x + p.faceX * (prad + 4), p.y + p.faceY * (prad + 4), 2.5, C.playerCore);
+  {
+    const aimA = Math.atan2(run.aimY - p.y, run.aimX - p.x);
+    const ex = p.x + Math.cos(aimA) * 3;
+    const ey = p.y + Math.sin(aimA) * 3;
+    const wide = run.grazeFlash > 0;
+    const blinkNow = !wide && Math.sin(run.time * 1.7 + run.seed % 7) > 0.985;
+    const eyeR = wide ? prad * 0.62 : prad * 0.45;
+    if (blinkNow) {
+      ctx.strokeStyle = C.playerCore;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ex - eyeR, ey);
+      ctx.lineTo(ex + eyeR, ey);
+      ctx.stroke();
+    } else {
+      fillCircle(ctx, ex, ey, eyeR, C.playerCore);
+      fillCircle(ctx, ex + Math.cos(aimA) * 1.5, ey + Math.sin(aimA) * 1.5, eyeR * 0.45, C.bg);
+    }
+  }
   ctx.globalAlpha = 1;
 
   ctx.restore();
@@ -411,7 +452,27 @@ function drawHud(ctx: CanvasRenderingContext2D, run: RunState): void {
   const def = sectorDef(run.sectorIndex);
   text(ctx, `SECTOR ${run.sectorIndex + 1} / ${config.sectors.length}`, config.width / 2, 20, 14, C.hudText, "center", true);
   text(ctx, def.name, config.width / 2, 38, 10, C.hudDim, "center", true, 400);
+  if (sec.anomaly !== null) {
+    text(ctx, `⚠ ${ANOMALIES[sec.anomaly].name}`, config.width / 2, 54, 10, C.canister, "center", true, 700);
+  }
   text(ctx, `flux ${run.flux}`, config.width - 16, 24, 14, C.mote, "right", true);
+  if (run.contract !== null) {
+    text(ctx, `contract: ${CONTRACTS[run.contract].name}`, config.width - 16, 42, 10, C.shard, "right", true, 700);
+  }
+
+  // Graze streak, next to the dash bars.
+  if (run.grazeStreak > 1) {
+    text(ctx, `graze ×${run.grazeStreak}`, 16 + run.stats.dashCharges * 26 + 8, 44, 11, C.playerCore, "left", true, 700);
+  }
+
+  // The simulation speaks — typewriter toasts, newest last.
+  run.toasts.forEach((toast, i) => {
+    const chars = Math.min(toast.text.length, Math.floor(toast.age * 45));
+    const fade = Math.min(1, (config.announcer.toastLife - toast.age) / 0.8);
+    ctx.globalAlpha = Math.max(0, fade) * 0.9;
+    text(ctx, `» ${toast.text.slice(0, chars)}`, 16, 70 + i * 16, 11, C.hudText, "left", true, 400);
+    ctx.globalAlpha = 1;
+  });
 
   const collected = sec.shardTotal - sec.shards.length;
   if (sec.shards.length > 0) {
@@ -662,6 +723,29 @@ function drawDraft(
     text(ctx, mod.name, r.x + r.w / 2, r.y + 48, 16, picked ? C.gateOpen : C.hudText, "center", false, 700);
     text(ctx, mod.desc, r.x + r.w / 2, r.y + 76, 11.5, C.hudDim, "center");
   });
+
+  // Optional contract wager.
+  if (state.contractOffer !== null) {
+    const cdef = CONTRACTS[state.contractOffer];
+    const cr = CONTRACT_RECT;
+    ctx.fillStyle = C.panel;
+    ctx.fillRect(cr.x, cr.y, cr.w, cr.h);
+    ctx.strokeStyle = state.contractAccepted ? C.shard : C.wallEdge;
+    ctx.lineWidth = state.contractAccepted ? 2 : 1;
+    ctx.strokeRect(cr.x + 0.5, cr.y + 0.5, cr.w - 1, cr.h - 1);
+    const mark = state.contractAccepted ? "☑" : "☐";
+    text(
+      ctx,
+      `${mark} CONTRACT — ${cdef.name}: ${cdef.desc} (+${cdef.bonus} flux)`,
+      cx,
+      cr.y + cr.h / 2,
+      11,
+      state.contractAccepted ? C.shard : C.hudDim,
+      "center",
+      true,
+      state.contractAccepted ? 700 : 400,
+    );
+  }
 
   // Deck editor — one row per carried caster.
   text(ctx, "CASTERS — click a card, then a destination (deck order = cast order)", cx, 278, 12, C.hudText, "center", true);

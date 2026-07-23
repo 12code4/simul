@@ -71,3 +71,11 @@ export const CONTINUE_RECT: UiRect = {
   w: 220,
   h: 32,
 };
+
+/** The optional-contract toggle strip on the sector-clear screen. */
+export const CONTRACT_RECT: UiRect = {
+  x: config.width / 2 - 240,
+  y: 222,
+  w: 480,
+  h: 26,
+};

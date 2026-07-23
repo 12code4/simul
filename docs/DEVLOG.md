@@ -8,6 +8,30 @@ material for devlogs or social posts later.
 
 ---
 
+## 2026-07-23 — v0.6 + v0.7 (beta channel): the game gets a personality
+
+- Two experimental updates shipped to a **beta branch with its own playtest URL**
+  (`/beta/` on the Pages site) so stable and experimental can be compared live.
+  The deploy workflow now builds both branches into one site: `main` at the
+  root, `beta` under `/beta/` — pushes to either refresh both.
+- **v0.6 "Ghost in the Sim"** (charm): the simulation now *talks* — deadpan
+  clinical toasts (`flavor.ts`, typewriter-rendered) reacting to first kills,
+  graze streaks, low hull… and idling, which it punishes by spawning
+  "motivation." A Touhou-style **graze system** turns near-misses into dash
+  recharge. The probe grew an **eye** that tracks the mouse aim (aim now lives
+  in run state so render stays read-only), blinks, and widens on grazes. Two
+  charm cards: **Yoyo** (boomerang, catch = instant recast, phases through
+  walls on the return) and **Remora** (orbital pet).
+- **v0.7 "House Rules"** (quirk): **Sector Anomalies** — one of five rule
+  mutators per sector (2+), rolled in generation so they're seed-stable, each
+  with an announcer intro; **Contracts** — opt-in wagers on the clear screen
+  (no-damage / speed / pacifist / greed) for bonus flux; and the **Prism** card
+  (splits into three off the first wall).
+- Design note: all flavor picks use time hashes, never `RunState.rng` — the
+  announcer can never change what a seed generates.
+- **Next:** playtest both on `/beta/`; whatever survives gets promoted to main
+  by merging the beta branch.
+
 ## 2026-07-22 — v0.5 "Trigger Protocol": the deck gets its depth
 
 - First update built ON the deck system per the new pillar, and it's the most
