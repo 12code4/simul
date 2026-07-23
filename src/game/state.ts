@@ -128,12 +128,14 @@ export interface RunState {
   time: number;
 }
 
-/** Dev/testing hooks read from the URL (?seed=hex&sector=1-5&deck=a,b,c). */
+/** Dev/testing hooks read from the URL (?seed=hex&sector=1-5&deck=a,b,c&boss=1). */
 export interface DevParams {
   seed: number | null;
   sector: number | null;
   /** Starting deck override for the first caster (comma-separated card ids). */
   deck: CardId[] | null;
+  /** Skip straight to the Warden fight (with sector=5). */
+  boss: boolean;
 }
 
 /** Selection state for the between-sector deck editor (click-click swaps). */
@@ -181,9 +183,10 @@ function readDevParams(): DevParams {
       seed: Number.isFinite(seed) ? seed >>> 0 : null,
       sector: Number.isFinite(sector) ? Math.min(5, Math.max(1, sector)) : null,
       deck,
+      boss: params.get("boss") === "1",
     };
   } catch {
-    return { seed: null, sector: null, deck: null };
+    return { seed: null, sector: null, deck: null, boss: false };
   }
 }
 

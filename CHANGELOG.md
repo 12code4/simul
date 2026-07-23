@@ -9,6 +9,31 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.10.0-beta] - 2026-07-23 — "The Warden" *(beta channel: /beta/)*
+
+### Added
+- **THE WARDEN**: sector 5's last shard now summons a gate guardian instead of
+  opening the exit. Orbiting shield nodes must fall before its hull takes
+  damage (Pierce/Ricochet shine); three phases — radial shot bursts, then
+  telegraphed charge dashes, then summons. Killing it carves the arena, rains
+  flux, and opens the gate for real. Boss bar + dev hook `?boss=1`.
+- **Enemy projectiles**: the Warden's bursts are dodgeable, wall-blocked shots —
+  a first for the sim.
+- **Sim Depth**: winning at your max depth unlocks the next (up to 5). Cycle
+  with **D** on the title screen. Each depth: agents +8% faster, heat 8%
+  denser, elite chance +5%. Depth shows in the HUD readout.
+
+## [0.9.0-beta] - 2026-07-23 — "The Bazaar" *(beta channel: /beta/)*
+
+### Added
+- **The Waystation**: spend run-flux on the sector-clear screen — Card Pack
+  (price climbs), Repair, Purge (destroy any card — deck thinning), Reroll
+  the mod draft. Every purchase is flux you didn't bank as cores.
+- **Blood shrines** (sector 2+): pay 1 integrity on touch for a strong card.
+  Refused at 1 hull.
+- **Elite agents**: gilded ring, double-plus HP, faster, +3 flux bounty.
+  Sectors 3+ promote 1–2 at generation; heat spawns roll a 20% elite chance.
+
 ## [0.7.0-beta] - 2026-07-23 — "House Rules" *(beta channel: /beta/)*
 
 ### Added

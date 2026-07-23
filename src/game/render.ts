@@ -353,6 +353,64 @@ function drawWorld(ctx: CanvasRenderingContext2D, run: RunState): void {
     }
   }
 
+  // The Warden's shots.
+  for (const shot of sec.enemyShots) {
+    ctx.globalAlpha = 0.3;
+    fillCircle(ctx, shot.x, shot.y, 8, C.pulsar);
+    ctx.globalAlpha = 1;
+    fillCircle(ctx, shot.x, shot.y, 4, C.pulsar);
+    fillCircle(ctx, shot.x, shot.y, 1.8, C.playerCore);
+  }
+
+  // The Warden itself: a rotating hexagon with orbiting shield nodes.
+  if (sec.warden) {
+    const wd = sec.warden;
+    if (wd.charge && wd.charge.telegraph > 0) {
+      // Charge telegraph: a line toward the doom.
+      ctx.strokeStyle = C.drifter;
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.5 + 0.4 * Math.sin(run.time * 30);
+      ctx.setLineDash([10, 8]);
+      ctx.beginPath();
+      ctx.moveTo(wd.x, wd.y);
+      ctx.lineTo(wd.x + wd.charge.dx * 700, wd.y + wd.charge.dy * 700);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+    ctx.save();
+    ctx.translate(wd.x, wd.y);
+    ctx.rotate(run.time * 0.7);
+    ctx.globalAlpha = 0.2;
+    fillCircle(ctx, 0, 0, config.warden.r + 14, C.pulsar);
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      const px = Math.cos(a) * config.warden.r;
+      const py = Math.sin(a) * config.warden.r;
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = C.pulsar;
+    ctx.fill();
+    ctx.strokeStyle = C.playerCore;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+    fillCircle(ctx, wd.x, wd.y, 6, wd.nodes.length === 0 ? C.playerCore : C.bg);
+    for (const node of wd.nodes) {
+      const nx = wd.x + Math.cos(wd.nodeAngle + node.offset) * config.warden.nodeOrbitR;
+      const ny = wd.y + Math.sin(wd.nodeAngle + node.offset) * config.warden.nodeOrbitR;
+      ctx.globalAlpha = 0.25;
+      fillCircle(ctx, nx, ny, config.warden.nodeR + 4, C.sweeper);
+      ctx.globalAlpha = 1;
+      fillCircle(ctx, nx, ny, config.warden.nodeR, C.sweeper);
+      text(ctx, String(node.hp), nx, ny + 0.5, 9, C.bg, "center", true, 800);
+    }
+  }
+
   // Particles.
   for (const pt of run.particles) {
     ctx.globalAlpha = Math.max(0, Math.min(1, pt.life / pt.maxLife));
@@ -491,6 +549,23 @@ function drawHud(ctx: CanvasRenderingContext2D, run: RunState): void {
     text(ctx, `contract: ${CONTRACTS[run.contract].name}`, config.width - 16, 42, 10, C.shard, "right", true, 700);
   }
 
+  // Boss bar.
+  if (sec.warden) {
+    const wd = sec.warden;
+    const bw = 320;
+    const bx = config.width / 2 - bw / 2;
+    const by = 84;
+    text(ctx, "THE WARDEN", config.width / 2, by - 8, 11, C.pulsar, "center", true, 800);
+    ctx.strokeStyle = C.pulsar;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw, 8);
+    ctx.fillStyle = C.pulsar;
+    ctx.fillRect(bx + 1, by + 1, Math.max(0, wd.hp / wd.maxHp) * (bw - 1), 7);
+    if (wd.nodes.length > 0) {
+      text(ctx, `shielded — ${wd.nodes.length} node${wd.nodes.length > 1 ? "s" : ""}`, config.width / 2, by + 20, 9, C.sweeper, "center", true, 700);
+    }
+  }
+
   // Graze streak, next to the dash bars.
   if (run.grazeStreak > 1) {
     text(ctx, `graze ×${run.grazeStreak}`, 16 + run.stats.dashCharges * 26 + 8, 44, 11, C.playerCore, "left", true, 700);
@@ -506,7 +581,9 @@ function drawHud(ctx: CanvasRenderingContext2D, run: RunState): void {
   });
 
   const collected = sec.shardTotal - sec.shards.length;
-  if (sec.shards.length > 0) {
+  if (sec.warden) {
+    text(ctx, "DESTROY THE WARDEN", 16, config.height - 22, 14, C.pulsar, "left", true, 700);
+  } else if (sec.shards.length > 0) {
     text(ctx, `shards ${collected} / ${sec.shardTotal}`, 16, config.height - 22, 14, C.shard, "left", true);
   } else {
     text(ctx, "EXIT OPEN — reach the gate", 16, config.height - 22, 14, C.gateOpen, "left", true);
@@ -516,7 +593,7 @@ function drawHud(ctx: CanvasRenderingContext2D, run: RunState): void {
 
   text(
     ctx,
-    `t=${sec.elapsed.toFixed(1)}s  agents=${sec.hazards.length}  kills=${run.kills}  seed=${run.seed.toString(16).padStart(8, "0")}`,
+    `${run.depth > 0 ? `depth=${run.depth}  ` : ""}t=${sec.elapsed.toFixed(1)}s  agents=${sec.hazards.length}  kills=${run.kills}  seed=${run.seed.toString(16).padStart(8, "0")}`,
     config.width - 16,
     config.height - 22,
     11,
@@ -689,6 +766,19 @@ function drawTitle(ctx: CanvasRenderingContext2D, state: GameState): void {
     }
   });
 
+  if (meta.unlockedDepth > 0) {
+    text(
+      ctx,
+      `D — sim depth: ${meta.chosenDepth} / ${meta.unlockedDepth} unlocked  (agents faster, pressure higher, elites richer)`,
+      cx,
+      462,
+      12,
+      meta.chosenDepth > 0 ? C.pulsar : C.hudDim,
+      "center",
+      true,
+      700,
+    );
+  }
   text(ctx, "WASD move · MOUSE aim & cast · SPACE/SHIFT dash (invulnerable) · ESC pause", cx, 482, 13, C.hudDim, "center");
   text(ctx, "find cards, build your caster · fire spreads on oil, coolant quenches, acid melts walls", cx, 504, 13, C.hudDim, "center");
   text(ctx, "collect shards to open the exit · flux banks into cores when a run ends", cx, 526, 13, C.hudDim, "center");
@@ -862,6 +952,7 @@ function drawEnd(ctx: CanvasRenderingContext2D, state: GameState, won: boolean):
   const o = state.outcome;
   if (won) {
     text(ctx, "SIMULATION CLEARED", cx, 190, 34, C.gateOpen, "center", true, 800);
+    text(ctx, "the warden is down. the sim will remember this.", cx, 222, 12, C.hudDim, "center", true, 400);
   } else {
     text(ctx, "SIGNAL LOST", cx, 190, 34, C.drifter, "center", true, 800);
   }

@@ -8,6 +8,30 @@ material for devlogs or social posts later.
 
 ---
 
+## 2026-07-23 — v0.9 + v0.10 (beta channel): economy and an ending
+
+- Two more beta updates, built from the option-B and option-C pitches the
+  project direction green-lit as "go ham":
+- **v0.9 "The Bazaar"** (Slay the Spire / Isaac DNA): the **Waystation** turns
+  run-flux into a real currency — card packs, repairs, draft rerolls, and
+  PURGE (deck thinning, the most important service in any deck game). **Blood
+  shrines** sell strong cards for integrity, Isaac-style. **Elite agents**
+  (gilded, tougher, bounty-carrying) seed sectors 3+ and roll on heat spawns.
+  Design intent: every flux spent mid-run is flux not banked as cores — greed
+  now has three directions (spend / bank / risk hull at shrines).
+- **v0.10 "The Warden"** (Hades / Gungeon DNA): the game has an ending now.
+  Sector 5's last shard summons a boss instead of opening the gate — shield
+  nodes reward Pierce/Ricochet decks, three hp-phases (bursts → telegraphed
+  charges → summons), and the sim's first **enemy projectiles** (dodgeable,
+  wall-blocked). **Sim Depth**: win at max depth to unlock the next of 5;
+  each adds agent speed, heat density, and elite chance — the replay ladder.
+- Dev hook `?boss=1` (with sector=5) jumps straight to the fight; that's how
+  it got scripted browser verification (boss bar, shield nodes, announcer
+  intro all confirmed on screen; the input bot died in 5 seconds, which for
+  Terminus at full saturation is honestly a balance data point).
+- **Next:** playtest verdicts on /beta/, then reconcile beta + the v0.8
+  director PR into one promoted stable build.
+
 ## 2026-07-23 — v0.6 + v0.7 (beta channel): the game gets a personality
 
 - Two experimental updates shipped to a **beta branch with its own playtest URL**

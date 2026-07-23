@@ -74,6 +74,10 @@ function startRun(state: GameState): void {
       slots[i] = card;
     });
   }
+  if (state.dev.boss && state.run.sectorIndex === config.sectors.length - 1) {
+    state.run.sector.shards = [];
+    summonWarden(state.run, state.run.sector);
+  }
   state.draftOptions = null;
   state.outcome = null;
   state.menuIndex = 0;
@@ -88,7 +92,13 @@ function bank(state: GameState, run: RunState, won: boolean): number {
   const m = state.meta;
   m.cores += banked;
   m.totalFlux += banked;
-  if (won) m.wins += 1;
+  if (won) {
+    m.wins += 1;
+    // Winning at your max depth unlocks the next rung of the ladder.
+    if (run.depth === m.unlockedDepth && m.unlockedDepth < config.depth.max) {
+      m.unlockedDepth += 1;
+    }
+  }
   m.bestSector = Math.max(m.bestSector, run.sectorIndex + 1);
   saveMeta(m);
   return banked;
@@ -142,6 +152,11 @@ function updateTitle(state: GameState, input: Input): void {
   META_TRACKS.forEach((track, i) => {
     if (input.takePress(`Digit${i + 1}`)) buyUpgrade(state.meta, track);
   });
+  // Sim Depth selection (unlocked by winning at the current max depth).
+  if (input.takePress("KeyD") && state.meta.unlockedDepth > 0) {
+    state.meta.chosenDepth = (state.meta.chosenDepth + 1) % (state.meta.unlockedDepth + 1);
+    saveMeta(state.meta);
+  }
 }
 
 function updatePaused(state: GameState, input: Input): void {
@@ -518,8 +533,14 @@ function updatePlaying(state: GameState, run: RunState, input: Input, dt: number
   updateOrbitals(run, sec, dt);
   updateHazards(run, sec, dt);
   updateCanisters(state, run, sec, dt);
-  // ABUNDANCE house rule: richer floor, faster pressure.
-  const heatInterval = sec.anomaly === "abundance" ? def.heatInterval * 0.7 : def.heatInterval;
+  updateWarden(state, run, sec, dt);
+  if (state.phase !== "playing") return;
+  updateEnemyShots(state, run, sec, dt);
+  if (state.phase !== "playing") return;
+  // ABUNDANCE house rule: richer floor, faster pressure. Sim Depth compounds.
+  const heatInterval =
+    (sec.anomaly === "abundance" ? def.heatInterval * 0.7 : def.heatInterval) *
+    Math.pow(config.depth.heatPerLevel, run.depth);
   updateHeat(run, sec, heatInterval, def.heatCap, dt);
   checkPlayerDamage(state, run);
 
@@ -939,6 +960,7 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
     }
 
     // Hazard hits.
+    let consumed = false;
     for (let h = sec.hazards.length - 1; h >= 0; h--) {
       const hzd = sec.hazards[h];
       if (pr.hitIds.includes(hzd.id)) continue;
@@ -951,8 +973,18 @@ function updateProjectiles(run: RunState, sec: SectorState, dt: number): void {
           releaseCargo(run, pr.x, pr.y, heading, pr.cargoCard, pr.cargoMods, pr.dmgBonus);
         }
         sec.projectiles.splice(i, 1);
+        consumed = true;
         break;
       }
+    }
+    if (consumed) continue;
+
+    // The Warden and its shield nodes.
+    if (sec.warden && hitWarden(run, sec, pr)) {
+      if (pr.cargoCard !== null) {
+        releaseCargo(run, pr.x, pr.y, heading, pr.cargoCard, pr.cargoMods, pr.dmgBonus);
+      }
+      sec.projectiles.splice(i, 1);
     }
   }
 }
@@ -1005,8 +1037,8 @@ function updateHazards(run: RunState, sec: SectorState, dt: number): void {
   const p = run.player;
 
   for (const hzd of sec.hazards) {
-    // OVERCLOCKED AGENTS house rule.
-    const spd = sec.anomaly === "overclock" ? 1.25 : 1;
+    // OVERCLOCKED AGENTS house rule × Sim Depth.
+    const spd = (sec.anomaly === "overclock" ? 1.25 : 1) * (1 + config.depth.speedPerLevel * run.depth);
     switch (hzd.kind) {
       case "drifter": {
         hzd.x += hzd.vx * spd * dt;
@@ -1327,8 +1359,14 @@ function collectPickups(state: GameState, run: RunState): void {
       sec.shards.splice(i, 1);
       addBurst(run, sh.x, sh.y, config.colors.shard, 12);
       if (sec.shards.length === 0) {
-        sec.gate.open = true;
-        addBurst(run, sec.gate.x, sec.gate.y, config.colors.gateOpen, 24);
+        // Terminus: the last shard summons the Warden — the gate stays shut
+        // until its guardian is destroyed.
+        if (sec.index === config.sectors.length - 1) {
+          summonWarden(run, sec);
+        } else {
+          sec.gate.open = true;
+          addBurst(run, sec.gate.x, sec.gate.y, config.colors.gateOpen, 24);
+        }
       }
     }
   }
@@ -1336,6 +1374,202 @@ function collectPickups(state: GameState, run: RunState): void {
   const g = sec.gate;
   if (g.open && dist(g.x, g.y, p.x, p.y) < g.r + config.player.radius) {
     clearSector(state, run);
+  }
+}
+
+// --- the Warden ------------------------------------------------------------
+// Sector 5's gate guardian: shield nodes must fall before its hull takes
+// damage (Pierce and Ricochet earn their keep here). Three phases by hp:
+// radial bursts → adds charge dashes → adds summons and faster bursts.
+
+function summonWarden(run: RunState, sec: SectorState): void {
+  const cfg = config.warden;
+  const x = clamp(sec.gate.x - 260, 200, sec.w - 200);
+  const y = clamp(sec.gate.y, 200, sec.h - 200);
+  detonate(sec.substrate, x, y, 130); // its arrival carves its own arena
+  const nodes: { offset: number; hp: number }[] = [];
+  for (let i = 0; i < cfg.nodeCount; i++) {
+    nodes.push({ offset: (i / cfg.nodeCount) * Math.PI * 2, hp: cfg.nodeHp });
+  }
+  sec.warden = {
+    x, y, hp: cfg.hp, maxHp: cfg.hp,
+    angle: 0, burstTimer: cfg.burstEvery, summonTimer: cfg.summonEvery,
+    chargeCooldown: cfg.chargeCooldown, charge: null, nodeAngle: 0, nodes,
+  };
+  run.shake = 2;
+  addBurst(run, x, y, config.colors.pulsar, 30);
+  pushToast(run, pickLine(LINES.wardenIntro, run.seed));
+}
+
+function wardenPhase(wd: { hp: number; maxHp: number }): number {
+  if (wd.hp > wd.maxHp * (2 / 3)) return 1;
+  if (wd.hp > wd.maxHp * (1 / 3)) return 2;
+  return 3;
+}
+
+function updateWarden(state: GameState, run: RunState, sec: SectorState, dt: number): void {
+  const wd = sec.warden;
+  if (!wd) return;
+  const cfg = config.warden;
+  const p = run.player;
+  const phase = wardenPhase(wd);
+
+  wd.nodeAngle += cfg.nodeOrbitSpeed * dt;
+
+  // Movement: drift around the arena's far half — unless charging.
+  if (wd.charge) {
+    const ch = wd.charge;
+    if (ch.telegraph > 0) {
+      ch.telegraph -= dt;
+    } else {
+      ch.t += dt;
+      wd.x += ch.dx * cfg.chargeSpeed * dt;
+      wd.y += ch.dy * cfg.chargeSpeed * dt;
+      addParticle(run, wd.x, wd.y, -ch.dx * 60, -ch.dy * 60, 0.3, 5, config.colors.pulsar);
+      if (ch.t >= cfg.chargeDuration) {
+        wd.charge = null;
+        wd.chargeCooldown = cfg.chargeCooldown;
+      }
+    }
+  } else {
+    wd.angle += cfg.orbitSpeed * dt;
+    const tx = sec.w * 0.72 + Math.cos(wd.angle) * 150;
+    const ty = sec.h / 2 + Math.sin(wd.angle) * 200;
+    const d = dist(wd.x, wd.y, tx, ty) || 1;
+    const speed = Math.min(120, d);
+    wd.x += ((tx - wd.x) / d) * speed * dt;
+    wd.y += ((ty - wd.y) / d) * speed * dt;
+
+    // Phase 2+: charge at the player after a telegraph.
+    wd.chargeCooldown -= dt;
+    if (phase >= 2 && wd.chargeCooldown <= 0) {
+      const cd = dist(wd.x, wd.y, p.x, p.y) || 1;
+      wd.charge = { dx: (p.x - wd.x) / cd, dy: (p.y - wd.y) / cd, t: 0, telegraph: cfg.chargeTelegraph };
+    }
+  }
+  wd.x = clamp(wd.x, 60, sec.w - 60);
+  wd.y = clamp(wd.y, 60, sec.h - 60);
+
+  // Radial bursts (faster and denser in phase 3).
+  wd.burstTimer -= dt;
+  if (wd.burstTimer <= 0) {
+    wd.burstTimer = phase === 3 ? cfg.burstEvery * 0.6 : cfg.burstEvery;
+    const shots = phase === 3 ? 12 : cfg.burstShots;
+    for (let i = 0; i < shots; i++) {
+      const a = (i / shots) * Math.PI * 2 + wd.nodeAngle;
+      sec.enemyShots.push({
+        x: wd.x, y: wd.y,
+        vx: Math.cos(a) * cfg.shotSpeed, vy: Math.sin(a) * cfg.shotSpeed,
+        life: cfg.shotLife,
+      });
+    }
+    addBurst(run, wd.x, wd.y, config.colors.pulsar, 8);
+  }
+
+  // Phase 3: summon reinforcements.
+  if (phase === 3) {
+    wd.summonTimer -= dt;
+    if (wd.summonTimer <= 0) {
+      wd.summonTimer = cfg.summonEvery;
+      spawnEdgeDrifter(run, sec);
+    }
+  }
+
+  // Contact damage: body and nodes alike.
+  if (p.dashTimer <= 0 && p.iframes <= 0) {
+    const pr = config.player.radius;
+    if (dist(wd.x, wd.y, p.x, p.y) < cfg.contactR + pr) {
+      damagePlayer(state, run, (p.x - wd.x) / (dist(wd.x, wd.y, p.x, p.y) || 1), (p.y - wd.y) / (dist(wd.x, wd.y, p.x, p.y) || 1));
+      return;
+    }
+    for (const node of wd.nodes) {
+      const nx = wd.x + Math.cos(wd.nodeAngle + node.offset) * cfg.nodeOrbitR;
+      const ny = wd.y + Math.sin(wd.nodeAngle + node.offset) * cfg.nodeOrbitR;
+      const nd = dist(nx, ny, p.x, p.y);
+      if (nd < cfg.nodeR + pr) {
+        damagePlayer(state, run, (p.x - nx) / (nd || 1), (p.y - ny) / (nd || 1));
+        return;
+      }
+    }
+  }
+}
+
+/** Player projectile vs the Warden. Returns true if the shot was consumed. */
+function hitWarden(run: RunState, sec: SectorState, pr: { x: number; y: number; r: number; dmg: number; pierce: boolean }): boolean {
+  const wd = sec.warden;
+  if (!wd) return false;
+  const cfg = config.warden;
+
+  for (let n = wd.nodes.length - 1; n >= 0; n--) {
+    const node = wd.nodes[n];
+    const nx = wd.x + Math.cos(wd.nodeAngle + node.offset) * cfg.nodeOrbitR;
+    const ny = wd.y + Math.sin(wd.nodeAngle + node.offset) * cfg.nodeOrbitR;
+    if (dist(nx, ny, pr.x, pr.y) < cfg.nodeR + pr.r) {
+      node.hp -= pr.dmg;
+      addBurst(run, nx, ny, config.colors.sweeper, 6);
+      if (node.hp <= 0) {
+        wd.nodes.splice(n, 1);
+        addBurst(run, nx, ny, config.colors.sweeper, 14);
+      }
+      return !pr.pierce;
+    }
+  }
+
+  if (wd.nodes.length === 0 && dist(wd.x, wd.y, pr.x, pr.y) < cfg.r + pr.r) {
+    const before = wardenPhase(wd);
+    wd.hp -= pr.dmg;
+    addBurst(run, pr.x, pr.y, config.colors.pulsar, 8);
+    if (wd.hp <= 0) {
+      killWarden(run, sec);
+      return true;
+    }
+    // Crossing a phase threshold re-shields it with fresh nodes.
+    if (wardenPhase(wd) > before) {
+      for (let i = 0; i < 2; i++) {
+        wd.nodes.push({ offset: (i / 2) * Math.PI * 2, hp: config.warden.nodeHp });
+      }
+      run.shake = 1.2;
+      addBurst(run, wd.x, wd.y, config.colors.sweeper, 20);
+    }
+    return !pr.pierce;
+  }
+  return false;
+}
+
+function killWarden(run: RunState, sec: SectorState): void {
+  const wd = sec.warden;
+  if (!wd) return;
+  sec.warden = null;
+  run.kills += 5;
+  detonate(sec.substrate, wd.x, wd.y, 90);
+  run.shake = 2;
+  addBurst(run, wd.x, wd.y, config.colors.pulsar, 40);
+  addBurst(run, wd.x, wd.y, config.colors.blast, 24);
+  for (let i = 0; i < 12; i++) {
+    sec.motes.push({ x: wd.x + ((i * 41) % 90) - 45, y: wd.y + ((i * 29) % 70) - 35 });
+  }
+  sec.gate.open = true;
+  addBurst(run, sec.gate.x, sec.gate.y, config.colors.gateOpen, 24);
+  pushToast(run, pickLine(LINES.wardenDown, run.kills));
+}
+
+function updateEnemyShots(state: GameState, run: RunState, sec: SectorState, dt: number): void {
+  const p = run.player;
+  const pr = config.player.radius;
+  for (let i = sec.enemyShots.length - 1; i >= 0; i--) {
+    const shot = sec.enemyShots[i];
+    shot.life -= dt;
+    shot.x += shot.vx * dt;
+    shot.y += shot.vy * dt;
+    if (shot.life <= 0 || matAt(sec.substrate, shot.x, shot.y) === MAT.wall) {
+      sec.enemyShots.splice(i, 1);
+      continue;
+    }
+    if (p.dashTimer <= 0 && p.iframes <= 0 && dist(shot.x, shot.y, p.x, p.y) < 5 + pr) {
+      sec.enemyShots.splice(i, 1);
+      damagePlayer(state, run, (p.x - shot.x) / (dist(shot.x, shot.y, p.x, p.y) || 1), (p.y - shot.y) / (dist(shot.x, shot.y, p.x, p.y) || 1));
+      if (state.phase !== "playing") return;
+    }
   }
 }
 
